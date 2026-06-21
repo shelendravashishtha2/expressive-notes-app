@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "resume-portfolio-98c1d"
+  },
+  "targets": {
+    "resume-portfolio-98c1d": {
+      "hosting": {
+        "notes": [
+          "shelendra-notes"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
