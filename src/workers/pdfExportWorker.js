@@ -5,10 +5,10 @@ import { normalizeCodeFenceContent, slugify } from '../utils/text.js';
 const PAGE = {
   width: 210,
   height: 297,
-  left: 16,
-  right: 16,
-  top: 19,
-  bottom: 19
+  left: 18,
+  right: 18,
+  top: 18,
+  bottom: 18
 };
 
 const CONTENT_WIDTH = PAGE.width - PAGE.left - PAGE.right;
@@ -16,32 +16,36 @@ const PAGE_BOTTOM = PAGE.height - PAGE.bottom;
 
 const COLORS = {
   text: [15, 23, 42],
-  muted: [100, 116, 139],
+  muted: [71, 85, 105],
   faint: [148, 163, 184],
   accent: [37, 99, 235],
   accentDark: [30, 64, 175],
   accentSoft: [219, 234, 254],
-  accentSofter: [239, 246, 255],
+  accentSofter: [248, 250, 252],
+  accentSurface: [236, 244, 255],
   border: [191, 219, 254],
   borderSoft: [226, 232, 240],
+  paper: [255, 255, 255],
   white: [255, 255, 255],
-  codeBg: [15, 23, 42],
-  codeTop: [30, 41, 59],
-  codeText: [226, 232, 240],
-  codeLineNo: [148, 163, 184],
-  codeComment: [125, 211, 252],
-  codeKeyword: [147, 197, 253],
-  codeString: [253, 224, 71],
-  codeNumber: [196, 181, 253],
-  codeFunction: [134, 239, 172],
-  codeOperator: [252, 165, 165],
-  codePunctuation: [203, 213, 225],
-  codeProperty: [249, 168, 212],
+  codeBg: [248, 250, 255],
+  codeTop: [236, 244, 255],
+  codeBorder: [191, 219, 254],
+  codeText: [15, 23, 42],
+  codeLineNo: [100, 116, 139],
+  codeComment: [14, 116, 144],
+  codeKeyword: [29, 78, 216],
+  codeString: [22, 163, 74],
+  codeNumber: [124, 58, 237],
+  codeFunction: [190, 24, 93],
+  codeOperator: [220, 38, 38],
+  codePunctuation: [71, 85, 105],
+  codeProperty: [234, 88, 12],
   quoteBg: [239, 246, 255],
   quoteBorder: [96, 165, 250],
-  tableHead: [219, 234, 254],
+  tableHead: [226, 232, 255],
   tableOdd: [255, 255, 255],
-  tableEven: [248, 250, 252]
+  tableEven: [248, 250, 252],
+  tocDots: [148, 163, 184]
 };
 
 const JS_KEYWORDS = [
@@ -100,6 +104,17 @@ function progress(stage, value, status = 'rendering') {
     stage,
     progress: Math.max(0, Math.min(100, Math.round(value)))
   });
+}
+
+function formatPdfTimestamp(value) {
+  try {
+    return new Intl.DateTimeFormat('en', {
+      dateStyle: 'long',
+      timeStyle: 'short'
+    }).format(new Date(value));
+  } catch {
+    return String(value || '').replace('T', ' ').replace(/\.\d+Z?$/, '');
+  }
 }
 
 function mmLineHeight(fontSize, multiplier = 1.42) {
@@ -694,7 +709,7 @@ function normalizedLanguage(language = '') {
 }
 
 function codeHeaderLabel(block, continued = false) {
-  const base = block.type === 'diagram' ? 'Mermaid diagram fallback' : `${normalizedLanguage(block.language)} code`;
+  const base = block.type === 'diagram' ? 'Mermaid diagram source' : `${normalizedLanguage(block.language)} code`;
   return continued ? `${base} · continued` : base;
 }
 
@@ -843,14 +858,16 @@ function drawCodeLikeBlock(pdf, cursor, block) {
     const boxHeight = headerHeight + paddingY * 2 + chunk.length * lineHeight;
 
     pdf.setFillColor(...COLORS.codeBg);
-    pdf.setDrawColor(...COLORS.codeTop);
+    pdf.setDrawColor(...COLORS.codeBorder);
     pdf.roundedRect(cursor.x, cursor.y, cursor.width, boxHeight, 3, 3, 'FD');
     pdf.setFillColor(...COLORS.codeTop);
     pdf.roundedRect(cursor.x, cursor.y, cursor.width, headerHeight, 3, 3, 'F');
     pdf.setFillColor(...COLORS.codeBg);
     pdf.rect(cursor.x, cursor.y + headerHeight - 2.5, cursor.width, 2.5, 'F');
+    pdf.setFillColor(...COLORS.accentSoft);
+    pdf.rect(cursor.x + paddingX - 1.2, cursor.y + headerHeight + 0.8, gutterWidth - 0.6, boxHeight - headerHeight - 1.6, 'F');
 
-    withFont(pdf, 'helvetica', 'bold', 9.2, COLORS.codeText);
+    withFont(pdf, 'helvetica', 'bold', 9.2, COLORS.accentDark);
     pdf.text(codeHeaderLabel(block, continued), cursor.x + 3.5, cursor.y + 5.5);
 
     chunk.forEach((line, lineOffset) => {
@@ -985,29 +1002,39 @@ function drawFigure(pdf, cursor, block) {
   cursor.y += boxHeight + 5;
 }
 
-function drawDocumentHeader(pdf, cursor, document, destinations) {
-  const titleLines = splitToLines(pdf, document.topicTitle, cursor.width - 8);
-  const titleLineHeight = mmLineHeight(19, 1.15);
-  const boxHeight = Math.max(40, titleLines.length * titleLineHeight + 22);
-  ensureSpace(pdf, cursor, boxHeight + 24);
+function drawDocumentHeader(pdf, cursor, document, destinations, documentIndex = 0, totalDocuments = 1) {
+  const chapterLabel = `Chapter ${String(documentIndex + 1).padStart(2, '0')}`;
+  const titleLines = splitToLines(pdf, document.topicTitle, cursor.width - 30);
+  const titleLineHeight = mmLineHeight(19.5, 1.14);
+  const boxHeight = Math.max(50, titleLines.length * titleLineHeight + 28);
+  ensureSpace(pdf, cursor, boxHeight + 28);
   destinations.set(`topic:${document.topicId}`, { page: pdf.getNumberOfPages(), top: cursor.y - 2 });
 
   const boxY = cursor.y - 4;
   pdf.setFillColor(...COLORS.accentSofter);
   pdf.setDrawColor(...COLORS.border);
   pdf.roundedRect(cursor.x, boxY, cursor.width, boxHeight, 5, 5, 'FD');
+  pdf.setFillColor(...COLORS.accent);
+  pdf.roundedRect(cursor.x + 4, boxY + 5, 18, 18, 3, 3, 'F');
 
-  withFont(pdf, 'helvetica', 'bold', 9.2, COLORS.accentDark);
-  pdf.text(normalizePdfText(document.topicGroup || document.domain || 'Reference'), cursor.x + 4, cursor.y + 3);
+  withFont(pdf, 'helvetica', 'bold', 12, COLORS.white);
+  pdf.text(String(documentIndex + 1), cursor.x + 13, boxY + 16.5, { align: 'center' });
 
-  withFont(pdf, 'helvetica', 'bold', 19, COLORS.text);
+  withFont(pdf, 'helvetica', 'bold', 8.4, COLORS.accentDark);
+  pdf.text(chapterLabel, cursor.x + 26, boxY + 12);
+  pdf.text(`${documentIndex + 1} / ${totalDocuments}`, cursor.x + cursor.width - 4, boxY + 12, { align: 'right' });
+
+  withFont(pdf, 'helvetica', 'bold', 9.2, COLORS.muted);
+  pdf.text(normalizePdfText(document.topicGroup || document.domain || 'Reference'), cursor.x + 26, boxY + 19.5);
+
+  withFont(pdf, 'helvetica', 'bold', 19.5, COLORS.text);
   titleLines.forEach((line, offset) => {
-    pdf.text(normalizePdfText(line), cursor.x + 4, cursor.y + 13 + offset * titleLineHeight);
+    pdf.text(normalizePdfText(line), cursor.x + 4, boxY + 31 + offset * titleLineHeight);
   });
-  cursor.y = boxY + boxHeight + 8;
+  cursor.y = boxY + boxHeight + 8.5;
 
   if (document.summary) {
-    writeWrappedParagraph(pdf, cursor, document.summary, { size: 10.3, color: COLORS.muted, after: 4.4 });
+    writeWrappedParagraph(pdf, cursor, document.summary, { size: 10.5, color: COLORS.muted, after: 4.8 });
   }
 
   const metaBits = [
@@ -1015,10 +1042,10 @@ function drawDocumentHeader(pdf, cursor, document, destinations) {
     `Mode: ${document.includeFullTopic ? 'Full topic export' : 'Selected sections only'}`,
     document.tocEntries?.length ? `Sections: ${document.tocEntries.length}` : 'Topic-level export'
   ];
-  writeWrappedParagraph(pdf, cursor, metaBits.join('  -  '), { size: 8.9, color: COLORS.muted, after: 2.8 });
+  writeWrappedParagraph(pdf, cursor, metaBits.join('  •  '), { size: 8.9, color: COLORS.muted, after: 3.2 });
 
   if (document.sourceFiles?.length) {
-    writeWrappedParagraph(pdf, cursor, `Source files: ${document.sourceFiles.join(', ')}`, { size: 8.4, color: COLORS.muted, after: 4.4 });
+    writeWrappedParagraph(pdf, cursor, `Source files: ${document.sourceFiles.join(', ')}`, { size: 8.4, color: COLORS.muted, after: 4.8 });
   }
   drawRule(pdf, cursor);
 }
@@ -1040,7 +1067,7 @@ function estimateBlockMinimumHeight(block) {
 
 
 async function renderDocument(pdf, cursor, document, destinations, documentIndex, totalDocuments) {
-  drawDocumentHeader(pdf, cursor, document, destinations);
+  drawDocumentHeader(pdf, cursor, document, destinations, documentIndex, totalDocuments);
 
   for (let index = 0; index < document.blocks.length; index += 1) {
     const block = document.blocks[index];
@@ -1097,22 +1124,36 @@ async function renderDocument(pdf, cursor, document, destinations, documentIndex
 
 function renderCover(pdf, plan, timestamp) {
   const cursor = createCursor();
+  const formattedTimestamp = formatPdfTimestamp(timestamp);
+
+  pdf.setFillColor(...COLORS.paper);
+  pdf.rect(0, 0, PAGE.width, PAGE.height, 'F');
   pdf.setFillColor(...COLORS.accentSoft);
-  pdf.roundedRect(PAGE.left, PAGE.top, CONTENT_WIDTH, 62, 7, 7, 'F');
+  pdf.roundedRect(PAGE.left, PAGE.top, CONTENT_WIDTH, 76, 9, 9, 'F');
   pdf.setFillColor(...COLORS.accent);
-  pdf.roundedRect(PAGE.left + 5, PAGE.top + 7, 3, 43, 1.5, 1.5, 'F');
+  pdf.roundedRect(PAGE.left + 6, PAGE.top + 8, 4, 50, 2, 2, 'F');
+  pdf.setFillColor(...COLORS.accentSurface);
+  pdf.roundedRect(PAGE.left + CONTENT_WIDTH - 52, PAGE.top + 9, 44, 18, 4, 4, 'F');
 
-  withFont(pdf, 'helvetica', 'bold', 11, COLORS.accentDark);
-  pdf.text('Technical Notes Cookbook', cursor.x + 12, cursor.y + 10);
-  withFont(pdf, 'helvetica', 'bold', 27, COLORS.text);
-  pdf.text(splitToLines(pdf, 'Selected Technical Notes Export', cursor.width - 18), cursor.x + 12, cursor.y + 26);
-  withFont(pdf, 'helvetica', 'normal', 11.5, COLORS.muted);
-  pdf.text(splitToLines(pdf, `${plan.summaryText}. Generated as a clean, document-only cookbook PDF.`, cursor.width - 18), cursor.x + 12, cursor.y + 44);
+  withFont(pdf, 'helvetica', 'bold', 10.5, COLORS.accentDark);
+  pdf.text('Technical Notes Handbook', cursor.x + 15, cursor.y + 10);
+  withFont(pdf, 'helvetica', 'bold', 28, COLORS.text);
+  pdf.text(splitToLines(pdf, 'Selected Technical Notes Export', cursor.width - 72), cursor.x + 15, cursor.y + 27);
+  withFont(pdf, 'helvetica', 'normal', 11.3, COLORS.muted);
+  pdf.text(
+    splitToLines(pdf, `${plan.summaryText}. Built as a clean, print-friendly reference with a clickable table of contents and light, readable code blocks.`, cursor.width - 72),
+    cursor.x + 15,
+    cursor.y + 46
+  );
+  withFont(pdf, 'helvetica', 'bold', 8.5, COLORS.accentDark);
+  pdf.text('Generated', PAGE.left + CONTENT_WIDTH - 30, PAGE.top + 17, { align: 'center' });
+  withFont(pdf, 'helvetica', 'bold', 9.8, COLORS.text);
+  pdf.text(splitToLines(pdf, formattedTimestamp, 34), PAGE.left + CONTENT_WIDTH - 30, PAGE.top + 23.5, { align: 'center' });
 
-  cursor.y = 94;
+  cursor.y = 108;
   const cards = [
     ['Scope', plan.scopeLabel],
-    ['Generated', timestamp],
+    ['Generated', formattedTimestamp],
     ['Topics', String(plan.selectedTopicCount)],
     ['Sections', String(plan.selectedSectionCount)]
   ];
@@ -1122,7 +1163,7 @@ function renderCover(pdf, plan, timestamp) {
     const cardY = cursor.y + Math.floor(index / 2) * 31;
     const cardWidth = (cursor.width - 7) / 2;
     pdf.setFillColor(...COLORS.white);
-    pdf.setDrawColor(...COLORS.border);
+    pdf.setDrawColor(...COLORS.borderSoft);
     pdf.roundedRect(cardX, cardY, cardWidth, 25, 4, 4, 'FD');
     withFont(pdf, 'helvetica', 'bold', 8.8, COLORS.accentDark);
     pdf.text(label, cardX + 3.5, cardY + 6.7);
@@ -1134,9 +1175,18 @@ function renderCover(pdf, plan, timestamp) {
   writeWrappedParagraph(
     pdf,
     cursor,
-    'This export is generated in the background so the app remains usable while the PDF is prepared, rendered, linked, and finalized.',
+    'This export is generated in the background so the app remains usable while chapters are prepared, laid out, linked, and finalized into a cleaner study document.',
     { size: 11, color: COLORS.muted }
   );
+}
+
+function drawDottedLeader(pdf, startX, endX, y) {
+  if (endX - startX < 8) return;
+  pdf.setDrawColor(...COLORS.tocDots);
+  pdf.setLineWidth(0.18);
+  pdf.setLineDashPattern([0.55, 2.1], 0);
+  pdf.line(startX, y, endX, y);
+  pdf.setLineDashPattern([], 0);
 }
 
 function reserveTocPages(pdf, documents) {
@@ -1164,8 +1214,12 @@ function reserveTocPages(pdf, documents) {
 
 function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount) {
   const entries = [];
-  plan.documents.forEach((document) => {
-    entries.push({ label: document.topicTitle, level: 1, key: `topic:${document.topicId}` });
+  plan.documents.forEach((document, index) => {
+    entries.push({
+      label: `${index + 1}. ${document.topicTitle}`,
+      level: 1,
+      key: `topic:${document.topicId}`
+    });
     (document.tocEntries || []).forEach((section) => {
       entries.push({ label: section.title, level: section.level, key: `heading:${document.topicId}:${section.id}` });
     });
@@ -1180,9 +1234,11 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
   let page = tocStartPage;
   let y = PAGE.top;
   pdf.setPage(page);
+  pdf.setFillColor(...COLORS.accentSoft);
+  pdf.roundedRect(PAGE.left, y, CONTENT_WIDTH, 20, 5, 5, 'F');
   withFont(pdf, 'helvetica', 'bold', 19, COLORS.text);
-  pdf.text('Export Summary', PAGE.left, y);
-  y += 9.5;
+  pdf.text('Export Summary', PAGE.left + 4, y + 12.5);
+  y += 28;
 
   const summaryFontSize = 10.6;
   const summaryLineHeight = mmLineHeight(summaryFontSize, 1.48);
@@ -1210,35 +1266,48 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
 
   withFont(pdf, 'helvetica', 'bold', 16, COLORS.text);
   pdf.text('Table of Contents', PAGE.left, y);
-  y += 8;
+  y += 9;
+
+  const drawContinuationHeader = () => {
+    withFont(pdf, 'helvetica', 'bold', 13, COLORS.text);
+    pdf.text('Table of Contents', PAGE.left, PAGE.top + 4);
+    withFont(pdf, 'helvetica', 'normal', 8.5, COLORS.muted);
+    pdf.text('continued', PAGE.width - PAGE.right, PAGE.top + 4, { align: 'right' });
+  };
 
   entries.forEach((entry) => {
     const destination = destinations.get(entry.key);
     if (!destination) return;
 
-    const fontSize = entry.level <= 1 ? 11.1 : entry.level === 2 ? 10.1 : 9.4;
-    const indent = entry.level <= 1 ? 0 : entry.level === 2 ? 8 : entry.level === 3 ? 14 : 20;
-    const availableWidth = CONTENT_WIDTH - indent - 20;
+    const fontSize = entry.level <= 1 ? 11.4 : entry.level === 2 ? 10.1 : 9.4;
+    const indent = entry.level <= 1 ? 0 : entry.level === 2 ? 10 : entry.level === 3 ? 17 : 23;
+    const availableWidth = CONTENT_WIDTH - indent - 18;
     const lines = splitToLines(pdf, entry.label, availableWidth);
-    const lineHeight = mmLineHeight(fontSize, 1.32);
-    const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + 1.6;
+    const lineHeight = mmLineHeight(fontSize, entry.level <= 1 ? 1.34 : 1.3);
+    const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + (entry.level <= 1 ? 3.6 : 1.8);
 
     if (y + blockHeight > PAGE_BOTTOM) {
       page = Math.min(page + 1, tocStartPage + tocPageCount - 1);
       pdf.setPage(page);
-      y = PAGE.top;
+      y = PAGE.top + 12;
+      drawContinuationHeader();
     }
 
     const x = PAGE.left + indent;
     withFont(pdf, 'helvetica', entry.level <= 1 ? 'bold' : 'normal', fontSize, COLORS.text);
-    pdf.text(lines, x, y);
+    const topLineCount = Math.max(0, lines.length - 1);
+    for (let index = 0; index < topLineCount; index += 1) {
+      pdf.text(lines[index], x, y + index * lineHeight);
+    }
+
+    const lastLineY = y + topLineCount * lineHeight;
+    const lastLine = lines[lines.length - 1] || '';
+    pdf.text(lastLine, x, lastLineY);
     const pageLabel = String(destination.page);
     const pageWidth = pdf.getTextWidth(pageLabel);
-    pdf.text(pageLabel, PAGE.width - PAGE.right - pageWidth, y);
-
-    pdf.setDrawColor(...COLORS.borderSoft);
-    pdf.setLineWidth(0.15);
-    pdf.line(x + Math.min(availableWidth, pdf.getTextWidth(lines[0] || '')) + 2, y - 0.8, PAGE.width - PAGE.right - pageWidth - 2, y - 0.8);
+    const pageX = PAGE.width - PAGE.right - pageWidth;
+    pdf.text(pageLabel, pageX, lastLineY);
+    drawDottedLeader(pdf, x + pdf.getTextWidth(lastLine) + 2.8, pageX - 2.4, lastLineY - 0.9);
     pdf.link(x, y - lineHeight + 1, CONTENT_WIDTH, blockHeight, { pageNumber: destination.page, top: Math.max(0, destination.top) });
     y += blockHeight;
   });
@@ -1249,7 +1318,7 @@ function addPageNumbers(pdf) {
   for (let page = 1; page <= totalPages; page += 1) {
     pdf.setPage(page);
     withFont(pdf, 'helvetica', 'normal', 8.6, COLORS.muted);
-    pdf.text(`Page ${page} of ${totalPages}`, PAGE.width - PAGE.right, PAGE.height - 7, { align: 'right' });
+    pdf.text(String(page), PAGE.width - PAGE.right, PAGE.height - 7, { align: 'right' });
   }
 }
 

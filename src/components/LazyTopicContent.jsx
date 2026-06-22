@@ -8,12 +8,12 @@ function estimateTopicHeight(markdown = '', sectionCount = 0) {
   return Math.max(540, Math.min(4200, Math.max(byLength, bySections) + 260));
 }
 
-function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px') {
+function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px', suspended = false) {
   const targetRef = useRef(null);
   const [nearViewport, setNearViewport] = useState(!enabled);
 
   useEffect(() => {
-    if (!enabled || nearViewport) return undefined;
+    if (!enabled || nearViewport || suspended) return undefined;
 
     const target = targetRef.current;
     const root = rootRef.current;
@@ -32,7 +32,7 @@ function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px')
 
     observer.observe(target);
     return () => observer.disconnect();
-  }, [enabled, nearViewport, rootMargin, rootRef]);
+  }, [enabled, nearViewport, rootMargin, rootRef, suspended]);
 
   return [targetRef, nearViewport];
 }
@@ -40,13 +40,15 @@ function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px')
 function LazyTopicContent({
   topic,
   darkMode,
-  monacoTheme,
+  codeThemeStyle,
+  mermaidThemePrefs,
   scrollRootRef,
   fullScroll = false,
+  suspendHydration = false,
   sectionCount = 0,
   forceHydrated = false
 }) {
-  const [shellRef, nearViewport] = useNearViewport(scrollRootRef, fullScroll);
+  const [shellRef, nearViewport] = useNearViewport(scrollRootRef, fullScroll, '1400px 0px 1400px 0px', suspendHydration);
   const [hydrated, setHydrated] = useState(!fullScroll || forceHydrated);
   const estimatedHeight = useMemo(
     () => estimateTopicHeight(topic?.content || '', sectionCount),
@@ -60,16 +62,18 @@ function LazyTopicContent({
   }, [forceHydrated, nearViewport]);
 
   return (
-    <div ref={shellRef} className="topic-content-shell">
+    <div ref={shellRef} className={`topic-content-shell${forceHydrated ? ' is-force-hydrated' : ''}`}>
       {hydrated ? (
         <div className="chat-response rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 shadow-sm md:p-8">
-          <MarkdownRenderer
-            content={topic.content}
-            darkMode={darkMode}
-            monacoTheme={monacoTheme}
-            topicId={topic.id}
-            headingIdPrefix={`${topic.id}__reader__`}
-          />
+          <div style={codeThemeStyle}>
+            <MarkdownRenderer
+              content={topic.content}
+              darkMode={darkMode}
+              mermaidThemePrefs={mermaidThemePrefs}
+              topicId={topic.id}
+              headingIdPrefix={`${topic.id}__reader__`}
+            />
+          </div>
         </div>
       ) : (
         <div

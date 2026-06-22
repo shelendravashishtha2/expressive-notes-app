@@ -1,6 +1,5 @@
-import { memo, useMemo } from 'react';
+import { memo } from 'react';
 import { ChevronsLeft, ChevronsRight, ListTree } from 'lucide-react';
-import { getSections } from '../utils/text.js';
 
 function levelClass(level) {
   if (level === 4) return 'ml-7 text-[12px] font-semibold opacity-85';
@@ -8,8 +7,7 @@ function levelClass(level) {
   return 'text-sm font-black';
 }
 
-function Toc({ topic, activeSectionId, onJump, collapsed, setCollapsed }) {
-  const sections = useMemo(() => getSections(topic?.content || ''), [topic?.content]);
+function Toc({ topic, sections = [], activeSectionId, onJump, collapsed, setCollapsed }) {
 
   if (collapsed) {
     return (

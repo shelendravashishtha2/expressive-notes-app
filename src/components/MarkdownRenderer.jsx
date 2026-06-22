@@ -1,60 +1,20 @@
-import { lazy, memo, Suspense, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Check, Copy, FileCode2, Maximize2, Minimize2 } from 'lucide-react';
+import { Check, Copy, FileCode2 } from 'lucide-react';
 import { getHeadingIdFactory, normalizeCodeFenceContent } from '../utils/text.js';
-import { defineNotesMonacoThemes, isDarkMonacoTheme } from '../utils/monacoThemes.js';
+import {
+  DEFAULT_MERMAID_THEME_PREFS,
+  buildMermaidRenderConfig
+} from '../utils/mermaidThemes.js';
+import { normalizeCodeLanguage, tokenizeCodeLine } from '../utils/codeTokens.js';
 
-const MonacoEditor = lazy(() => import('@monaco-editor/react'));
-const INLINE_MONACO_LINE_LIMIT = 20;
+const MERMAID_RENDER_ROOT_MARGIN = '640px 0px 640px 0px';
 
-function normalizeLanguage(language = '') {
-  const lang = String(language).toLowerCase().replace('language-', '').trim();
-  const aliases = {
-    js: 'javascript',
-    jsx: 'javascript',
-    ts: 'typescript',
-    tsx: 'typescript',
-    py: 'python',
-    sh: 'shell',
-    bash: 'shell',
-    zsh: 'shell',
-    shellscript: 'shell',
-    yml: 'yaml',
-    tf: 'hcl',
-    terraform: 'hcl',
-    hcl: 'hcl',
-    txt: 'text',
-    plain: 'text',
-    plaintext: 'text',
-    docker: 'dockerfile'
-  };
-  return aliases[lang] || lang || 'text';
-}
-
-function monacoLanguage(language) {
-  const lang = normalizeLanguage(language);
-  const supported = {
-    javascript: 'javascript',
-    typescript: 'typescript',
-    jsx: 'javascript',
-    tsx: 'typescript',
-    python: 'python',
-    json: 'json',
-    yaml: 'yaml',
-    markdown: 'markdown',
-    html: 'html',
-    css: 'css',
-    sql: 'sql',
-    shell: 'shell',
-    bash: 'shell',
-    dockerfile: 'dockerfile',
-    hcl: 'plaintext',
-    mermaid: 'plaintext',
-    text: 'plaintext'
-  };
-  return supported[lang] || 'plaintext';
-}
+let mermaidModulePromise = null;
+let mermaidRenderQueue = Promise.resolve();
+const mermaidSvgCache = new Map();
+const tokenLineCache = new Map();
 
 function childrenToText(children) {
   if (typeof children === 'string') return children;
@@ -68,45 +28,40 @@ function isExternalHref(href = '') {
   return /^(?:[a-z]+:)?\/\//i.test(href);
 }
 
-function useLazyVisible(rootMargin = '220px') {
+function useNearViewport(rootMargin = '220px') {
   const ref = useRef(null);
-  const [visible, setVisible] = useState(false);
+  const [nearViewport, setNearViewport] = useState(false);
 
   useEffect(() => {
+    if (nearViewport) return undefined;
+
     const node = ref.current;
-    if (!node || visible) return undefined;
+    if (!node) return undefined;
+
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) {
-        setVisible(true);
+        setNearViewport(true);
         observer.disconnect();
       }
     }, { root: null, rootMargin, threshold: 0.01 });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [rootMargin, visible]);
+  }, [nearViewport, rootMargin]);
 
-  return [ref, visible];
+  return [ref, nearViewport];
 }
 
 function StaticCodePreview({ code, language, hint = '' }) {
   const lines = useMemo(() => String(code).replace(/\n$/, '').split('\n'), [code]);
-  const previewLines = lines.slice(0, 48);
-  const truncated = lines.length > previewLines.length;
   return (
     <pre className="code-pre overflow-x-auto p-0" aria-label={`${language} code preview`}>
       <code className={`language-${language}`}>
-        {previewLines.map((line, index) => (
+        {lines.map((line, index) => (
           <span className="code-line" key={`${index}-${line.slice(0, 16)}`}>
             <span className="code-line-number">{index + 1}</span>
             <span className="code-line-text">{line || ' '}</span>
           </span>
         ))}
-        {truncated && (
-          <span className="code-line code-line-fade">
-            <span className="code-line-number">…</span>
-            <span className="code-line-text">Preview truncated. Expand this block to open the full Monaco editor.</span>
-          </span>
-        )}
         {hint ? (
           <span className="code-line code-line-fade">
             <span className="code-line-number">i</span>
@@ -118,31 +73,72 @@ function StaticCodePreview({ code, language, hint = '' }) {
   );
 }
 
+async function getMermaidModule() {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import('mermaid').then((module) => module.default);
+  }
+  return mermaidModulePromise;
+}
+
+function queueMermaidRender(task) {
+  const queuedTask = mermaidRenderQueue.then(task, task);
+  mermaidRenderQueue = queuedTask.then(() => undefined, () => undefined);
+  return queuedTask;
+}
+
+function rememberMermaidSvg(cacheKey, svg) {
+  mermaidSvgCache.set(cacheKey, svg);
+  if (mermaidSvgCache.size <= 80) return;
+  const firstKey = mermaidSvgCache.keys().next().value;
+  if (firstKey) mermaidSvgCache.delete(firstKey);
+}
+
+function tokenClassName(type = 'text') {
+  switch (type) {
+    case 'comment': return 'code-token-comment';
+    case 'keyword': return 'code-token-keyword';
+    case 'string': return 'code-token-string';
+    case 'number': return 'code-token-number';
+    case 'function': return 'code-token-function';
+    case 'operator': return 'code-token-operator';
+    case 'property': return 'code-token-property';
+    case 'punctuation': return 'code-token-punctuation';
+    default: return 'code-token-text';
+  }
+}
+
+function getTokenizedCodeLines(code, language) {
+  const cacheKey = `${language}\u0000${code}`;
+  if (tokenLineCache.has(cacheKey)) return tokenLineCache.get(cacheKey);
+
+  const tokenLines = code
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) => tokenizeCodeLine(line || ' ', language));
+
+  tokenLineCache.set(cacheKey, tokenLines);
+  if (tokenLineCache.size <= 140) return tokenLines;
+
+  const firstKey = tokenLineCache.keys().next().value;
+  if (firstKey) tokenLineCache.delete(firstKey);
+  return tokenLines;
+}
+
 const CodeBlock = memo(function CodeBlock({
   code,
   language = 'text',
-  darkMode = true,
-  monacoTheme = 'notes-dark',
   pdfMode = false
 }) {
   const [copied, setCopied] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-  const [containerRef, visible] = useLazyVisible('260px');
-  const lang = normalizeLanguage(language);
+  const lang = normalizeCodeLanguage(language);
   const normalizedCode = useMemo(
     () => normalizeCodeFenceContent(code, lang),
     [code, lang]
   );
-  const lines = useMemo(() => normalizedCode.replace(/\n$/, '').split('\n'), [normalizedCode]);
-  const shouldMountMonaco = visible && (expanded || lines.length <= INLINE_MONACO_LINE_LIMIT);
-  const allowVerticalScroll = expanded && lines.length > INLINE_MONACO_LINE_LIMIT;
-  const editorHeight = expanded
-    ? '78vh'
-    : `${Math.min(420, Math.max(126, lines.length * 22 + 54))}px`;
-  const surfaceTone = isDarkMonacoTheme(monacoTheme) ? 'dark' : 'light';
-  const modeLabel = shouldMountMonaco
-    ? (allowVerticalScroll ? 'expanded editor with its own scroll' : 'inline editor without wheel capture')
-    : (visible ? 'static preview · expand for Monaco' : 'static preview · lazy Monaco');
+  const tokenLines = useMemo(
+    () => getTokenizedCodeLines(normalizedCode, lang),
+    [normalizedCode, lang]
+  );
 
   const copy = async () => {
     await navigator.clipboard.writeText(normalizedCode);
@@ -156,130 +152,110 @@ const CodeBlock = memo(function CodeBlock({
 
   return (
     <div
-      ref={containerRef}
       className="code-shell group my-7 overflow-hidden rounded-[1.6rem] border border-[var(--code-border)] bg-[var(--code-bg)] shadow-[0_24px_48px_-24px_rgba(2,6,23,0.6)]"
       data-code-block="true"
-      data-monaco-surface={surfaceTone}
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--code-border)] bg-[var(--code-top)] px-4 py-3">
         <div className="flex min-w-0 items-center gap-2 text-xs font-black uppercase tracking-[0.16em] text-[var(--code-label)]">
           <FileCode2 size={15} />
           <span>{lang}</span>
-          <span className="text-[10px] font-semibold normal-case tracking-normal opacity-75">{modeLabel}</span>
+          <span className="text-[10px] font-semibold normal-case tracking-normal opacity-75">static themed renderer</span>
         </div>
         <div className="flex items-center gap-2">
-          <button type="button" onClick={() => setExpanded((v) => !v)} className="inline-flex items-center gap-1 rounded-lg border border-[var(--code-border)] bg-[var(--code-button)] px-2 py-1 text-xs font-bold text-[var(--code-label)] transition hover:opacity-80" title="Toggle inline editor height">
-            {expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-            {expanded ? 'Compact' : 'Expand'}
-          </button>
-          <button type="button" onClick={copy} className="inline-flex items-center gap-1 rounded-lg border border-[var(--code-border)] bg-[var(--code-button)] px-2 py-1 text-xs font-bold text-[var(--code-label)] transition hover:opacity-80">
+          <button type="button" onClick={copy} className="inline-flex items-center gap-1 rounded-lg border border-[var(--code-border)] bg-[var(--code-button)] px-2 py-1 text-xs font-bold text-[var(--code-button-text)] transition hover:opacity-80">
             {copied ? <Check size={14} /> : <Copy size={14} />}
             {copied ? 'Copied' : 'Copy'}
           </button>
         </div>
       </div>
-
-      <div
-        style={{ minHeight: visible ? editorHeight : undefined }}
-        className={`monaco-inline-wrap ${allowVerticalScroll ? 'monaco-inline-scrollable' : 'monaco-inline-static'}`}
-      >
-        {shouldMountMonaco ? (
-          <Suspense fallback={<StaticCodePreview code={normalizedCode} language={lang} />}>
-            <MonacoEditor
-              beforeMount={defineNotesMonacoThemes}
-              height={editorHeight}
-              defaultLanguage={monacoLanguage(lang)}
-              language={monacoLanguage(lang)}
-              value={normalizedCode}
-              theme={monacoTheme}
-              options={{
-                readOnly: true,
-                domReadOnly: true,
-                minimap: { enabled: false },
-                lineNumbers: 'on',
-                folding: true,
-                scrollBeyondLastLine: false,
-                wordWrap: 'on',
-                fontSize: 13.5,
-                lineHeight: 22,
-                padding: { top: 14, bottom: 14 },
-                automaticLayout: true,
-                renderLineHighlight: 'none',
-                selectionHighlight: false,
-                occurrencesHighlight: 'off',
-                matchBrackets: 'never',
-                contextmenu: false,
-                links: false,
-                hover: { enabled: false },
-                glyphMargin: false,
-                stickyScroll: { enabled: false },
-                guides: { indentation: false, highlightActiveIndentation: false },
-                overviewRulerLanes: 0,
-                scrollbar: {
-                  vertical: allowVerticalScroll ? 'auto' : 'hidden',
-                  horizontal: 'auto',
-                  verticalScrollbarSize: 10,
-                  horizontalScrollbarSize: 10,
-                  handleMouseWheel: expanded,
-                  alwaysConsumeMouseWheel: false,
-                  useShadows: false
-                },
-                mouseWheelZoom: false,
-                smoothScrolling: true,
-                cursorSmoothCaretAnimation: 'off'
-              }}
-            />
-          </Suspense>
-        ) : (
-          <StaticCodePreview
-            code={normalizedCode}
-            language={lang}
-            hint={lines.length > INLINE_MONACO_LINE_LIMIT ? 'Expand this block to open Monaco without interrupting page scroll.' : ''}
-          />
-        )}
-      </div>
+      <pre className="code-pre overflow-x-auto p-0" aria-label={`${lang} code block`}>
+        <code className={`language-${lang}`}>
+          {tokenLines.map((tokens, lineIndex) => (
+            <span className="code-line" key={`${lineIndex}-${lang}`}>
+              <span className="code-line-number">{lineIndex + 1}</span>
+              <span className="code-line-text">
+                {tokens.map((token, tokenIndex) => (
+                  <span key={`${lineIndex}-${tokenIndex}-${token.text}`} className={tokenClassName(token.type)}>
+                    {token.text}
+                  </span>
+                ))}
+              </span>
+            </span>
+          ))}
+        </code>
+      </pre>
       <pre className="pdf-only"><code>{normalizedCode}</code></pre>
     </div>
   );
 });
 
-const MermaidBlock = memo(function MermaidBlock({ code, darkMode = true, pdfMode = false }) {
+const MermaidBlock = memo(function MermaidBlock({
+  code,
+  darkMode = true,
+  mermaidThemePrefs = DEFAULT_MERMAID_THEME_PREFS,
+  pdfMode = false
+}) {
   const reactId = useId().replace(/:/g, '');
   const idRef = useRef(`mermaid-${reactId}-${Math.random().toString(36).slice(2)}`);
-  const [containerRef, visible] = useLazyVisible('300px');
+  const renderVersionRef = useRef(0);
+  const [containerRef, nearViewport] = useNearViewport(MERMAID_RENDER_ROOT_MARGIN);
   const [svg, setSvg] = useState('');
   const [error, setError] = useState('');
+  const [rendering, setRendering] = useState(false);
   const source = useMemo(
     () => normalizeCodeFenceContent(code, 'mermaid').trim(),
     [code]
   );
 
   useEffect(() => {
-    if (!visible || !source) return undefined;
+    if (!nearViewport || !source) return undefined;
     let cancelled = false;
     async function render() {
       try {
         setError('');
-        const { default: mermaid } = await import('mermaid');
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'loose',
-          theme: darkMode ? 'dark' : 'default',
-          flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' },
-          sequence: { useMaxWidth: true }
+        setRendering(true);
+        const config = buildMermaidRenderConfig(mermaidThemePrefs, darkMode);
+        const cacheKey = JSON.stringify({
+          source,
+          theme: config.theme,
+          look: config.look,
+          darkMode: config.darkMode,
+          themeVariables: config.themeVariables
         });
-        const result = await mermaid.render(idRef.current, source);
-        if (!cancelled) setSvg(result.svg || '');
+        if (mermaidSvgCache.has(cacheKey)) {
+          if (!cancelled) {
+            setSvg(mermaidSvgCache.get(cacheKey) || '');
+            setRendering(false);
+          }
+          return;
+        }
+        const renderId = `${idRef.current}-${renderVersionRef.current + 1}`;
+        renderVersionRef.current += 1;
+        const nextSvg = await queueMermaidRender(async () => {
+          const mermaid = await getMermaidModule();
+          mermaid.initialize(config);
+          const result = await mermaid.render(renderId, source);
+          return result.svg || '';
+        });
+
+        if (!cancelled) {
+          rememberMermaidSvg(cacheKey, nextSvg);
+          setSvg(nextSvg);
+          setRendering(false);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err?.message || 'Unable to render Mermaid diagram');
           setSvg('');
+          setRendering(false);
         }
       }
     }
     render();
-    return () => { cancelled = true; };
-  }, [visible, source, darkMode]);
+    return () => {
+      cancelled = true;
+    };
+  }, [nearViewport, source, darkMode, mermaidThemePrefs]);
 
   if (pdfMode) {
     return <pre className="pdf-code-block"><code>{source}</code></pre>;
@@ -301,10 +277,10 @@ const MermaidBlock = memo(function MermaidBlock({ code, darkMode = true, pdfMode
             <StaticCodePreview code={source} language="mermaid" />
           </div>
         ) : svg ? (
-          <div className="mermaid-svg" dangerouslySetInnerHTML={{ __html: svg }} />
+          <div className={`mermaid-svg${rendering ? ' is-rendering' : ''}`} dangerouslySetInnerHTML={{ __html: svg }} />
         ) : (
           <div className="diagram-skeleton flex min-h-[150px] items-center justify-center rounded-xl border border-dashed border-[var(--border)] text-sm font-semibold text-[var(--muted)]">
-            {visible ? 'Rendering diagram…' : 'Diagram will render when it reaches the viewport.'}
+            {nearViewport ? 'Rendering diagram…' : 'Diagram will render as you approach this section.'}
           </div>
         )}
       </div>
@@ -315,7 +291,7 @@ const MermaidBlock = memo(function MermaidBlock({ code, darkMode = true, pdfMode
 function MarkdownRenderer({
   content,
   darkMode = true,
-  monacoTheme = darkMode ? 'notes-dark' : 'notes-light',
+  mermaidThemePrefs = DEFAULT_MERMAID_THEME_PREFS,
   pdfMode = false,
   topicId = '',
   headingIdPrefix = ''
@@ -360,11 +336,11 @@ function MarkdownRenderer({
       const match = /language-([a-zA-Z0-9_-]+)/.exec(className || '');
       const language = match?.[1] || 'text';
       const isBlock = !inline && (match || text.includes('\n'));
-      if (isBlock && normalizeLanguage(language) === 'mermaid') {
-        return <MermaidBlock code={text} darkMode={darkMode} pdfMode={pdfMode} />;
+      if (isBlock && normalizeCodeLanguage(language) === 'mermaid') {
+        return <MermaidBlock code={text} darkMode={darkMode} mermaidThemePrefs={mermaidThemePrefs} pdfMode={pdfMode} />;
       }
       if (isBlock) {
-        return <CodeBlock code={text} language={language} darkMode={darkMode} monacoTheme={monacoTheme} pdfMode={pdfMode} />;
+        return <CodeBlock code={text} language={language} pdfMode={pdfMode} />;
       }
       return <code className="rounded-lg border border-[var(--border)] bg-[var(--inline-code-bg)] px-1.5 py-0.5 font-mono text-[0.92em] font-semibold text-[var(--inline-code-text)] shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">{children}</code>;
     },

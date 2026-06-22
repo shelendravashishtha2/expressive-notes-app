@@ -1,4 +1,5 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { curatedNotes, groupOrderPreference } from './data/notes.js';
 import Sidebar from './components/Sidebar.jsx';
 import Topbar from './components/Topbar.jsx';
@@ -19,8 +20,13 @@ import {
 } from './utils/exportTree.js';
 import {
   DEFAULT_MONACO_THEME_PREFS,
+  getStaticCodeThemeCssVariables,
   normalizeMonacoThemePrefs
 } from './utils/monacoThemes.js';
+import {
+  DEFAULT_MERMAID_THEME_PREFS,
+  normalizeMermaidThemePrefs
+} from './utils/mermaidThemes.js';
 import { createScopedHeadingId, getSections, slugify } from './utils/text.js';
 import { buildFastSearchIndex, searchSectionsFast } from './utils/search.js';
 
@@ -96,17 +102,25 @@ export default function App() {
   const [monacoThemePrefs, setMonacoThemePrefs] = useState(() => normalizeMonacoThemePrefs(
     readObject('notes:monacoThemes', DEFAULT_MONACO_THEME_PREFS)
   ));
+  const [mermaidThemePrefs, setMermaidThemePrefs] = useState(() => normalizeMermaidThemePrefs(
+    readObject('notes:mermaidThemes', DEFAULT_MERMAID_THEME_PREFS)
+  ));
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeSectionId, setActiveSectionId] = useState('overview');
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [readMode, setReadMode] = useState(() => localStorage.getItem('notes:readMode') || 'topic');
   const [isFullscreen, setIsFullscreen] = useState(() => Boolean(getFullscreenElement()));
+  const [pauseLazyHydration, setPauseLazyHydration] = useState(false);
+  const [forcedHydratedTopicIds, setForcedHydratedTopicIds] = useState(() => new Set());
 
   const appShellRef = useRef(null);
   const articleRef = useRef(null);
   const scrollRef = useRef(null);
   const progressRef = useRef(null);
   const pendingScrollRef = useRef(null);
+  const scrollRetryTimerRef = useRef(0);
+  const scrollSettleFrameRef = useRef(0);
+  const scrollSettleTimeoutRef = useRef(0);
   const activeSectionRef = useRef('overview');
   const activeTopicRef = useRef(activeId);
   const darkModeRef = useRef(darkMode);
@@ -115,11 +129,28 @@ export default function App() {
   const visibleHeadingEntriesRef = useRef(emptyVisibleMap());
   const visibleTopicEntriesRef = useRef(emptyVisibleMap());
   const pendingLayoutAnchorRef = useRef(null);
+  const pendingReadModeViewportAnchorRef = useRef(null);
   const preserveNextScrollResetRef = useRef(false);
+  const readModeRestoreTimerRef = useRef(0);
+  const readModeHydrationTimerRef = useRef(0);
+  const readModeFreezeCleanupTimerRef = useRef(0);
+  const readModeFreezeOverlayRef = useRef(null);
+  const scrollAnimationFrameRef = useRef(0);
+  const scrollAnimationTokenRef = useRef(0);
+  const scrollRetryFrameRef = useRef(0);
+  const programmaticScrollRef = useRef(false);
+  const programmaticScrollReleaseTimerRef = useRef(0);
 
   const searchIndex = useMemo(() => buildFastSearchIndex(allTopics), []);
   const searchResults = useMemo(() => searchSectionsFast(searchIndex, debouncedQuery), [searchIndex, debouncedQuery]);
   const exportTree = useMemo(() => buildExportTree(allTopics), []);
+  const topicSectionsById = useMemo(() => {
+    const nextMap = new Map();
+    allTopics.forEach((topic) => {
+      nextMap.set(topic.id, getSections(topic.content || ''));
+    });
+    return nextMap;
+  }, []);
   const [selectedExportIds, setSelectedExportIds] = useState(() => clearSelection());
   const [exportScopeLabel, setExportScopeLabel] = useState('Custom selection');
 
@@ -127,16 +158,18 @@ export default function App() {
     () => allTopics.find((topic) => topic.id === activeId) || allTopics[0],
     [activeId]
   );
-  const activeTopicSections = useMemo(
-    () => getSections(activeTopic?.content || ''),
-    [activeTopic?.content]
-  );
+  const activeTopicSections = topicSectionsById.get(activeTopic?.id) || [];
+  const deferredMermaidThemePrefs = useDeferredValue(mermaidThemePrefs);
   const currentSection = useMemo(
     () => activeTopicSections.find((section) => section.id === activeSectionId) || null,
     [activeSectionId, activeTopicSections]
   );
   const isFullScrollMode = readMode === 'full';
-  const readerMonacoTheme = monacoThemePrefs.dark;
+  const readerMonacoTheme = darkMode ? monacoThemePrefs.dark : monacoThemePrefs.light;
+  const codeThemeStyle = useMemo(
+    () => getStaticCodeThemeCssVariables(readerMonacoTheme),
+    [readerMonacoTheme]
+  );
   const selectedExportCount = selectedExportIds.length;
 
   const {
@@ -146,47 +179,391 @@ export default function App() {
     resetTask
   } = useExportTask();
 
+  const forceHydrateTopic = useCallback((topicId) => {
+    if (!topicId) return;
+    const topicIndex = allTopics.findIndex((topic) => topic.id === topicId);
+    const idsToHydrate = [
+      allTopics[topicIndex - 1]?.id,
+      topicId,
+      allTopics[topicIndex + 1]?.id
+    ].filter(Boolean);
+
+    setForcedHydratedTopicIds((current) => {
+      if (idsToHydrate.every((id) => current.has(id))) return current;
+      const next = new Set(current);
+      idsToHydrate.forEach((id) => next.add(id));
+      return next;
+    });
+  }, []);
+
   const queueSectionScroll = useCallback((topicId, sectionId = 'overview', behavior = 'auto') => {
+    if (topicId) forceHydrateTopic(topicId);
     pendingScrollRef.current = {
       topicId,
       sectionId: sectionId || 'overview',
       behavior
     };
+  }, [forceHydrateTopic]);
+
+  const releaseProgrammaticScrollSoon = useCallback((delay = 240) => {
+    window.clearTimeout(programmaticScrollReleaseTimerRef.current);
+    programmaticScrollReleaseTimerRef.current = window.setTimeout(() => {
+      programmaticScrollRef.current = false;
+    }, delay);
   }, []);
 
-  const scrollToSection = useCallback((sectionId, behavior = 'smooth', topicId = activeTopicRef.current) => {
-    const scroller = scrollRef.current;
+  const lockProgrammaticScroll = useCallback((duration = 600) => {
+    programmaticScrollRef.current = true;
+    releaseProgrammaticScrollSoon(duration + 260);
+  }, [releaseProgrammaticScrollSoon]);
+
+  const syncActiveSectionState = useCallback((nextSectionId) => {
+    const normalizedSectionId = nextSectionId || 'overview';
+    activeSectionRef.current = normalizedSectionId;
+    startTransition(() => {
+      setActiveSectionId((current) => (current === normalizedSectionId ? current : normalizedSectionId));
+    });
+  }, []);
+
+  const syncActiveTopicState = useCallback((nextTopicId) => {
+    if (!nextTopicId) return;
+    activeTopicRef.current = nextTopicId;
+    startTransition(() => {
+      setActiveIdState((current) => (current === nextTopicId ? current : nextTopicId));
+    });
+  }, []);
+
+  const resolveScrollTarget = useCallback((topicId, sectionId = 'overview') => {
     const article = articleRef.current;
-    if (!scroller || !article || !topicId) return false;
+    if (!article || !topicId) return { topicShell: null, target: null };
 
     const safeTopicId = escapeSelectorValue(topicId);
     const topicShell = article.querySelector(`[data-topic-shell="true"][data-topic-id="${safeTopicId}"]`);
-    if (!topicShell) return false;
+    if (!topicShell) return { topicShell: null, target: null };
 
     const normalizedSectionId = sectionId || 'overview';
+    const overviewAnchor = topicShell.querySelector('[data-overview-anchor="true"]') || topicShell;
+    if (normalizedSectionId === 'overview') {
+      return { topicShell, target: overviewAnchor };
+    }
+
     const safeSectionId = escapeSelectorValue(normalizedSectionId);
-    const target = normalizedSectionId === 'overview'
-      ? topicShell
-      : topicShell.querySelector(`[data-heading-id="${safeSectionId}"]`);
-    const finalTarget = target || topicShell;
+    return {
+      topicShell,
+      target: topicShell.querySelector(`[data-heading-id="${safeSectionId}"]`)
+    };
+  }, []);
 
-    const scrollerBox = scroller.getBoundingClientRect();
-    const targetBox = finalTarget.getBoundingClientRect();
-    const top = scroller.scrollTop + (targetBox.top - scrollerBox.top) - 92;
-    scroller.scrollTo({ top: Math.max(0, top), behavior });
+  const flashScrollTarget = useCallback((topicShell, target, sectionId = 'overview') => {
+    const flashTarget = sectionId === 'overview'
+      ? topicShell?.querySelector('.chat-response') || topicShell
+      : target;
+    if (!flashTarget) return;
 
-    const flashTarget = normalizedSectionId === 'overview'
-      ? topicShell.querySelector('.chat-response') || topicShell
-      : finalTarget;
     flashTarget.classList.remove('section-flash');
     window.setTimeout(() => flashTarget.classList.add('section-flash'), 20);
     window.setTimeout(() => flashTarget.classList.remove('section-flash'), 1700);
+  }, []);
 
-    activeSectionRef.current = normalizedSectionId;
-    setActiveSectionId((current) => (current === normalizedSectionId ? current : normalizedSectionId));
-    fullScrollSnapshotRef.current = { topicId, sectionId: normalizedSectionId };
+  const getStickyHeaderOffset = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller) return 84;
+
+    const scrollerBox = scroller.getBoundingClientRect();
+    const topbar = scroller.querySelector('header');
+    if (!topbar) return 84;
+
+    return Math.max(0, topbar.getBoundingClientRect().bottom - scrollerBox.top);
+  }, []);
+
+  const resolveScrollTop = useCallback((target) => {
+    const scroller = scrollRef.current;
+    if (!scroller || !target) return null;
+
+    const scrollerBox = scroller.getBoundingClientRect();
+    const desiredTop = getStickyHeaderOffset() + 18;
+    const targetTop = target.getBoundingClientRect().top - scrollerBox.top;
+    const nextTop = scroller.scrollTop + targetTop - desiredTop;
+    const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+
+    return Math.max(0, Math.min(nextTop, maxTop));
+  }, [getStickyHeaderOffset]);
+
+  const captureReadModeViewportAnchor = useCallback(() => {
+    const scroller = scrollRef.current;
+    const article = articleRef.current;
+    if (!scroller || !article) return null;
+
+    const scrollerBox = scroller.getBoundingClientRect();
+    const anchorLine = scrollerBox.top + getStickyHeaderOffset() + 24;
+    const topicCandidates = Array.from(article.querySelectorAll('[data-topic-shell="true"]'))
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.height > 0);
+
+    if (!topicCandidates.length) return null;
+
+    const containingTopic = topicCandidates.find(({ rect }) => rect.top <= anchorLine && rect.bottom >= anchorLine);
+    const nextTopic = topicCandidates.find(({ rect }) => rect.top > anchorLine);
+    const previousTopic = [...topicCandidates].reverse().find(({ rect }) => rect.bottom < anchorLine);
+    const activeTopicEntry = containingTopic || nextTopic || previousTopic;
+    const topicElement = activeTopicEntry?.element;
+    if (!topicElement) return null;
+
+    const topicId = topicElement.getAttribute('data-topic-id') || activeTopicRef.current;
+    const headingCandidates = Array.from(topicElement.querySelectorAll('[data-heading-key]'))
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.height > 0);
+
+    const headingAbove = headingCandidates
+      .filter(({ rect }) => rect.top <= anchorLine)
+      .sort((left, right) => right.rect.top - left.rect.top)[0];
+    const headingBelow = headingCandidates
+      .filter(({ rect }) => rect.top > anchorLine)
+      .sort((left, right) => left.rect.top - right.rect.top)[0];
+    const activeHeading = headingAbove || headingBelow;
+    const anchorElement = activeHeading?.element || topicElement.querySelector('[data-overview-anchor="true"]') || topicElement;
+    const anchorRect = anchorElement.getBoundingClientRect();
+
+    return {
+      topicId,
+      sectionId: activeHeading?.element?.getAttribute('data-heading-id') || activeSectionRef.current || 'overview',
+      headingKey: activeHeading?.element?.getAttribute('data-heading-key') || `${topicId}:overview`,
+      offset: anchorRect.top - scrollerBox.top,
+      anchorLineOffset: anchorLine - scrollerBox.top,
+      scrollTop: scroller.scrollTop
+    };
+  }, [getStickyHeaderOffset]);
+
+  const restoreReadModeViewportAnchor = useCallback((anchor) => {
+    const scroller = scrollRef.current;
+    const article = articleRef.current;
+    if (!anchor || !scroller || !article || !anchor.topicId) return false;
+
+    const topicTarget = article.querySelector(
+      `[data-topic-shell="true"][data-topic-id="${escapeSelectorValue(anchor.topicId)}"]`
+    );
+    if (!topicTarget) return false;
+
+    const headingTarget = anchor.headingKey
+      ? topicTarget.querySelector(`[data-heading-key="${escapeSelectorValue(anchor.headingKey)}"]`)
+      : null;
+    const sectionTarget = anchor.sectionId && anchor.sectionId !== 'overview'
+      ? topicTarget.querySelector(`[data-heading-id="${escapeSelectorValue(anchor.sectionId)}"]`)
+      : null;
+    const target = headingTarget || sectionTarget || topicTarget.querySelector('[data-overview-anchor="true"]') || topicTarget;
+    if (!target) return false;
+
+    const restoreOnce = () => {
+      const scrollerBox = scroller.getBoundingClientRect();
+      const currentOffset = target.getBoundingClientRect().top - scrollerBox.top;
+      const maxTop = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      const nextTop = Math.max(0, Math.min(scroller.scrollTop + currentOffset - anchor.offset, maxTop));
+      scroller.scrollTop = nextTop;
+    };
+
+    restoreOnce();
+    window.clearTimeout(readModeRestoreTimerRef.current);
+    readModeRestoreTimerRef.current = window.setTimeout(restoreOnce, 220);
     return true;
   }, []);
+
+  const resumeLazyHydrationSoon = useCallback((delay = 260) => {
+    window.clearTimeout(readModeHydrationTimerRef.current);
+    readModeHydrationTimerRef.current = window.setTimeout(() => {
+      setPauseLazyHydration(false);
+    }, delay);
+  }, []);
+
+  const clearReadModeFreezeOverlay = useCallback(() => {
+    window.clearTimeout(readModeFreezeCleanupTimerRef.current);
+    const overlay = readModeFreezeOverlayRef.current;
+    if (overlay?.parentNode) overlay.parentNode.removeChild(overlay);
+    readModeFreezeOverlayRef.current = null;
+  }, []);
+
+  const createReadModeFreezeOverlay = useCallback(() => {
+    const source = scrollRef.current;
+    if (!source || typeof document === 'undefined') return null;
+
+    clearReadModeFreezeOverlay();
+    const rect = source.getBoundingClientRect();
+    const overlay = document.createElement('div');
+    overlay.className = 'read-mode-freeze-overlay';
+    overlay.setAttribute('aria-hidden', 'true');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: `${rect.top}px auto auto ${rect.left}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
+      overflow: 'hidden',
+      pointerEvents: 'none',
+      zIndex: '120',
+      background: getComputedStyle(source).background || getComputedStyle(source).backgroundColor || 'transparent'
+    });
+
+    const clone = source.cloneNode(true);
+    if (clone instanceof HTMLElement) {
+      clone.scrollTop = source.scrollTop;
+      clone.style.height = `${rect.height}px`;
+      clone.style.width = '100%';
+      clone.style.overflow = 'hidden';
+      clone.style.margin = '0';
+      clone.style.pointerEvents = 'none';
+      overlay.appendChild(clone);
+    }
+
+    document.body.appendChild(overlay);
+    readModeFreezeOverlayRef.current = overlay;
+    return overlay;
+  }, [clearReadModeFreezeOverlay]);
+
+  const stopAnimatedScroll = useCallback(() => {
+    scrollAnimationTokenRef.current += 1;
+    window.cancelAnimationFrame(scrollAnimationFrameRef.current);
+    scrollAnimationFrameRef.current = 0;
+  }, []);
+
+  const animateScrollerTo = useCallback((topOrGetter, duration = 380) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    const getTop = typeof topOrGetter === 'function' ? topOrGetter : () => topOrGetter;
+    const firstTargetTop = getTop();
+    if (!Number.isFinite(firstTargetTop)) return;
+
+    const startTop = scroller.scrollTop;
+    const initialDelta = firstTargetTop - startTop;
+    if (Math.abs(initialDelta) < 1) {
+      scroller.scrollTop = firstTargetTop;
+      return;
+    }
+
+    stopAnimatedScroll();
+    const token = scrollAnimationTokenRef.current;
+    const startedAt = performance.now();
+
+    const easeInOutCubic = (value) => (
+      value < 0.5
+        ? 4 * value * value * value
+        : 1 - ((-2 * value + 2) ** 3) / 2
+    );
+
+    const step = (now) => {
+      if (scrollAnimationTokenRef.current !== token) return;
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = easeInOutCubic(progress);
+      const latestTargetTop = getTop();
+      const safeTargetTop = Number.isFinite(latestTargetTop) ? latestTargetTop : firstTargetTop;
+      scroller.scrollTop = startTop + (safeTargetTop - startTop) * eased;
+
+      if (progress < 1) {
+        scrollAnimationFrameRef.current = window.requestAnimationFrame(step);
+      } else {
+        const exactTop = getTop();
+        if (Number.isFinite(exactTop)) scroller.scrollTop = exactTop;
+        scrollAnimationFrameRef.current = 0;
+      }
+    };
+
+    scrollAnimationFrameRef.current = window.requestAnimationFrame(step);
+  }, [stopAnimatedScroll]);
+
+  const performScrollTo = useCallback((topOrGetter, behavior = 'auto', duration = 380) => {
+    const scroller = scrollRef.current;
+    if (!scroller) return;
+
+    const getTop = typeof topOrGetter === 'function' ? topOrGetter : () => topOrGetter;
+    const top = getTop();
+    if (!Number.isFinite(top)) return;
+
+    if (behavior === 'smooth') {
+      animateScrollerTo(getTop, duration);
+      return;
+    }
+
+    stopAnimatedScroll();
+    scroller.scrollTo({ top, behavior: 'auto' });
+  }, [animateScrollerTo, stopAnimatedScroll]);
+
+  const scrollToSection = useCallback((sectionId, behavior = 'smooth', topicId = activeTopicRef.current, attempt = 0) => {
+    const scroller = scrollRef.current;
+    if (!scroller || !topicId) return false;
+
+    forceHydrateTopic(topicId);
+
+    const normalizedSectionId = sectionId || 'overview';
+    const knownSections = topicSectionsById.get(topicId) || [];
+    const sectionExists = normalizedSectionId === 'overview'
+      || knownSections.some((section) => section.id === normalizedSectionId);
+    const { topicShell, target } = resolveScrollTarget(topicId, normalizedSectionId);
+    const fallbackTarget = topicShell?.querySelector('[data-overview-anchor="true"]') || topicShell;
+    const finalTarget = target || (!sectionExists || normalizedSectionId === 'overview' ? fallbackTarget : null);
+
+    if (!topicShell || !finalTarget) {
+      if (attempt < 28) {
+        window.cancelAnimationFrame(scrollRetryFrameRef.current);
+        scrollRetryFrameRef.current = window.requestAnimationFrame(() => {
+          scrollToSection(normalizedSectionId, behavior, topicId, attempt + 1);
+        });
+      }
+      return false;
+    }
+
+    window.clearTimeout(scrollRetryTimerRef.current);
+    window.cancelAnimationFrame(scrollRetryFrameRef.current);
+
+    const getDynamicTop = () => {
+      const latest = resolveScrollTarget(topicId, normalizedSectionId);
+      const latestFallback = latest.topicShell?.querySelector('[data-overview-anchor="true"]') || latest.topicShell;
+      const latestTarget = latest.target || (!sectionExists || normalizedSectionId === 'overview' ? latestFallback : finalTarget);
+      return resolveScrollTop(latestTarget);
+    };
+
+    const nextTop = getDynamicTop();
+    if (!Number.isFinite(nextTop)) return false;
+
+    const distance = Math.abs(nextTop - scroller.scrollTop);
+    const duration = behavior === 'smooth'
+      ? Math.min(1150, Math.max(320, Math.round(distance * 0.45)))
+      : 0;
+
+    lockProgrammaticScroll(duration || 180);
+    performScrollTo(getDynamicTop, behavior, duration || 1);
+
+    const exactCorrection = () => {
+      const correctedTop = getDynamicTop();
+      if (Number.isFinite(correctedTop) && Math.abs(correctedTop - scroller.scrollTop) > 1) {
+        scroller.scrollTop = correctedTop;
+      }
+    };
+
+    window.cancelAnimationFrame(scrollSettleFrameRef.current);
+    window.clearTimeout(scrollSettleTimeoutRef.current);
+    scrollSettleFrameRef.current = window.requestAnimationFrame(() => {
+      scrollSettleFrameRef.current = window.requestAnimationFrame(exactCorrection);
+    });
+    scrollSettleTimeoutRef.current = window.setTimeout(() => {
+      exactCorrection();
+      releaseProgrammaticScrollSoon(120);
+    }, duration + 90);
+
+    flashScrollTarget(topicShell, finalTarget, normalizedSectionId);
+    syncActiveTopicState(topicId);
+    syncActiveSectionState(normalizedSectionId);
+    fullScrollSnapshotRef.current = { topicId, sectionId: normalizedSectionId };
+    return true;
+  }, [
+    flashScrollTarget,
+    forceHydrateTopic,
+    lockProgrammaticScroll,
+    performScrollTo,
+    releaseProgrammaticScrollSoon,
+    resolveScrollTarget,
+    resolveScrollTop,
+    syncActiveSectionState,
+    syncActiveTopicState,
+    topicSectionsById
+  ]);
 
   const captureLayoutAnchor = useCallback(() => {
     const scroller = scrollRef.current;
@@ -194,14 +571,14 @@ export default function App() {
     if (!scroller || !article) return;
 
     const scrollerBox = scroller.getBoundingClientRect();
-    const anchorLine = scrollerBox.top + 112;
+    const anchorLine = scrollerBox.top + getStickyHeaderOffset() + 24;
     const topicCandidates = Array.from(article.querySelectorAll('[data-topic-shell="true"]'))
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.bottom >= anchorLine);
+      .filter(({ rect }) => rect.height > 0);
 
-    const activeTopic = topicCandidates.sort(
-      (left, right) => Math.abs(left.rect.top - anchorLine) - Math.abs(right.rect.top - anchorLine)
-    )[0];
+    const activeTopic = topicCandidates.find(({ rect }) => rect.top <= anchorLine && rect.bottom >= anchorLine)
+      || topicCandidates.find(({ rect }) => rect.top > anchorLine)
+      || [...topicCandidates].reverse().find(({ rect }) => rect.bottom < anchorLine);
 
     const topicElement = activeTopic?.element;
     if (!topicElement) return;
@@ -209,18 +586,22 @@ export default function App() {
 
     const headingCandidates = Array.from(topicElement.querySelectorAll('[data-heading-key]'))
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
-      .filter(({ rect }) => rect.bottom >= anchorLine);
+      .filter(({ rect }) => rect.height > 0);
 
-    const activeHeading = headingCandidates.sort(
-      (left, right) => Math.abs(left.rect.top - anchorLine) - Math.abs(right.rect.top - anchorLine)
-    )[0];
+    const activeHeading = headingCandidates
+      .filter(({ rect }) => rect.top <= anchorLine)
+      .sort((left, right) => right.rect.top - left.rect.top)[0]
+      || headingCandidates
+        .filter(({ rect }) => rect.top > anchorLine)
+        .sort((left, right) => left.rect.top - right.rect.top)[0];
+    const anchorElement = activeHeading?.element || topicElement.querySelector('[data-overview-anchor="true"]') || topicElement;
 
     pendingLayoutAnchorRef.current = {
-      headingKey: activeHeading?.element?.getAttribute('data-heading-key') || '',
+      headingKey: activeHeading?.element?.getAttribute('data-heading-key') || `${topicId}:overview`,
       topicId,
-      offset: activeTopic.rect.top - scrollerBox.top
+      offset: anchorElement.getBoundingClientRect().top - scrollerBox.top
     };
-  }, []);
+  }, [getStickyHeaderOffset]);
 
   const setLeftCollapsedAnchored = useCallback((nextValue) => {
     captureLayoutAnchor();
@@ -234,6 +615,7 @@ export default function App() {
 
   const selectTopic = useCallback((id, sectionId = null, behavior = 'auto') => {
     const normalizedSectionId = sectionId || 'overview';
+    forceHydrateTopic(id);
     activeTopicRef.current = id;
     activeSectionRef.current = normalizedSectionId;
     fullScrollSnapshotRef.current = { topicId: id, sectionId: normalizedSectionId };
@@ -248,21 +630,23 @@ export default function App() {
       return;
     }
 
-    if (sectionId) queueSectionScroll(id, sectionId, 'auto');
-  }, [isFullScrollMode, queueSectionScroll, scrollToSection]);
+    if (sectionId) queueSectionScroll(id, sectionId, behavior === 'auto' ? 'smooth' : behavior);
+  }, [forceHydrateTopic, isFullScrollMode, queueSectionScroll, scrollToSection]);
 
   const handleSearchSelect = useCallback((result) => {
     selectTopic(
       result.topicId,
       result.sectionId === 'overview' ? null : result.sectionId,
-      isFullScrollMode ? 'smooth' : 'auto'
+      'smooth'
     );
     setRawQuery('');
-  }, [isFullScrollMode, selectTopic]);
+  }, [selectTopic]);
 
   const handleTocJump = useCallback((section) => {
-    scrollToSection(section.id, 'smooth', activeTopic.id);
-  }, [activeTopic.id, scrollToSection]);
+    const topicId = isFullScrollMode ? activeTopicRef.current || activeTopic.id : activeTopic.id;
+    forceHydrateTopic(topicId);
+    scrollToSection(section.id, 'smooth', topicId);
+  }, [activeTopic.id, forceHydrateTopic, isFullScrollMode, scrollToSection]);
 
   useEffect(() => {
     darkModeRef.current = darkMode;
@@ -305,6 +689,10 @@ export default function App() {
   }, [monacoThemePrefs]);
 
   useEffect(() => {
+    localStorage.setItem('notes:mermaidThemes', JSON.stringify(mermaidThemePrefs));
+  }, [mermaidThemePrefs]);
+
+  useEffect(() => {
     const syncFullscreenState = () => {
       setIsFullscreen(Boolean(getFullscreenElement()));
     };
@@ -318,6 +706,50 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => () => {
+    window.clearTimeout(scrollRetryTimerRef.current);
+    window.cancelAnimationFrame(scrollRetryFrameRef.current);
+    window.cancelAnimationFrame(scrollSettleFrameRef.current);
+    window.clearTimeout(scrollSettleTimeoutRef.current);
+    window.clearTimeout(readModeRestoreTimerRef.current);
+    window.clearTimeout(readModeHydrationTimerRef.current);
+    window.clearTimeout(readModeFreezeCleanupTimerRef.current);
+    window.clearTimeout(programmaticScrollReleaseTimerRef.current);
+    stopAnimatedScroll();
+    clearReadModeFreezeOverlay();
+  }, [clearReadModeFreezeOverlay, stopAnimatedScroll]);
+
+  useLayoutEffect(() => {
+    const anchor = pendingReadModeViewportAnchorRef.current;
+    if (!anchor) return undefined;
+    pendingReadModeViewportAnchorRef.current = null;
+
+    const restore = () => restoreReadModeViewportAnchor(anchor);
+    restore();
+
+    let frameA = 0;
+    let frameB = 0;
+    let settleTimer = 0;
+
+    frameA = window.requestAnimationFrame(() => {
+      restore();
+      frameB = window.requestAnimationFrame(() => {
+        restore();
+        settleTimer = window.setTimeout(() => {
+          restore();
+          clearReadModeFreezeOverlay();
+          resumeLazyHydrationSoon();
+        }, 220);
+      });
+    });
+
+    return () => {
+      if (frameA) window.cancelAnimationFrame(frameA);
+      if (frameB) window.cancelAnimationFrame(frameB);
+      if (settleTimer) window.clearTimeout(settleTimer);
+    };
+  }, [clearReadModeFreezeOverlay, readMode, restoreReadModeViewportAnchor, resumeLazyHydrationSoon]);
+
   useLayoutEffect(() => {
     const anchor = pendingLayoutAnchorRef.current;
     if (!anchor) return undefined;
@@ -325,6 +757,7 @@ export default function App() {
 
     let frameA = 0;
     let frameB = 0;
+    let settleTimer = 0;
 
     frameA = window.requestAnimationFrame(() => {
       frameB = window.requestAnimationFrame(() => {
@@ -338,18 +771,24 @@ export default function App() {
         const headingTarget = anchor.headingKey
           ? topicTarget?.querySelector(`[data-heading-key="${escapeSelectorValue(anchor.headingKey)}"]`)
           : null;
-        const target = topicTarget || headingTarget;
+        const target = headingTarget || topicTarget;
         if (!target) return;
 
         const scrollerBox = scroller.getBoundingClientRect();
-        const currentOffset = target.getBoundingClientRect().top - scrollerBox.top;
-        scroller.scrollTop += currentOffset - anchor.offset;
+        const restoreAnchor = () => {
+          const currentOffset = target.getBoundingClientRect().top - scrollerBox.top;
+          scroller.scrollTop += currentOffset - anchor.offset;
+        };
+
+        restoreAnchor();
+        settleTimer = window.setTimeout(restoreAnchor, 180);
       });
     });
 
     return () => {
       if (frameA) window.cancelAnimationFrame(frameA);
       if (frameB) window.cancelAnimationFrame(frameB);
+      if (settleTimer) window.clearTimeout(settleTimer);
     };
   }, [leftCollapsed, rightCollapsed, readMode]);
 
@@ -371,8 +810,7 @@ export default function App() {
       });
     } else if (!isFullScrollMode && node && !preserveNextScrollResetRef.current) {
       node.scrollTo({ top: 0, behavior: 'auto' });
-      activeSectionRef.current = 'overview';
-      setActiveSectionId('overview');
+      syncActiveSectionState('overview');
     }
 
     preserveNextScrollResetRef.current = false;
@@ -380,7 +818,7 @@ export default function App() {
     if (progressRef.current && !isFullScrollMode) {
       progressRef.current.style.transform = 'scaleX(0)';
     }
-  }, [activeTopic?.id, isFullScrollMode, scrollToSection]);
+  }, [activeTopic?.id, isFullScrollMode, scrollToSection, syncActiveSectionState]);
 
   useEffect(() => {
     const root = scrollRef.current;
@@ -425,6 +863,8 @@ export default function App() {
         else visibleHeadingEntriesRef.current.delete(key);
       });
 
+      if (programmaticScrollRef.current) return;
+
       const visible = Array.from(visibleHeadingEntriesRef.current.values())
         .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
       if (!visible?.target) return;
@@ -434,8 +874,7 @@ export default function App() {
         || visible.target.closest('[data-topic-shell="true"]')?.getAttribute('data-topic-id');
 
       if (sectionId && activeSectionRef.current !== sectionId) {
-        activeSectionRef.current = sectionId;
-        setActiveSectionId(sectionId);
+        syncActiveSectionState(sectionId);
       }
 
       if (isFullScrollMode && topicId) {
@@ -452,7 +891,7 @@ export default function App() {
       visibleHeadingEntriesRef.current = emptyVisibleMap();
       observer.disconnect();
     };
-  }, [activeTopic?.id, isFullScrollMode]);
+  }, [activeTopic?.id, isFullScrollMode, syncActiveSectionState]);
 
   useEffect(() => {
     if (!isFullScrollMode) return undefined;
@@ -472,14 +911,15 @@ export default function App() {
         else visibleTopicEntriesRef.current.delete(topicId);
       });
 
+      if (programmaticScrollRef.current) return;
+
       const visible = Array.from(visibleTopicEntriesRef.current.values())
         .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
       const topicId = visible?.target?.getAttribute('data-topic-id');
       if (!topicId) return;
 
       if (activeTopicRef.current !== topicId) {
-        activeTopicRef.current = topicId;
-        setActiveIdState((current) => (current === topicId ? current : topicId));
+        syncActiveTopicState(topicId);
       }
 
       fullScrollSnapshotRef.current = {
@@ -497,7 +937,7 @@ export default function App() {
       visibleTopicEntriesRef.current = emptyVisibleMap();
       observer.disconnect();
     };
-  }, [isFullScrollMode]);
+  }, [isFullScrollMode, syncActiveTopicState]);
 
   useEffect(() => {
     const wasFullScroll = wasFullScrollRef.current;
@@ -518,14 +958,13 @@ export default function App() {
     if (!snapshot.topicId) return;
 
     activeTopicRef.current = snapshot.topicId;
-    activeSectionRef.current = snapshot.sectionId || 'overview';
-    setActiveSectionId(snapshot.sectionId || 'overview');
+    syncActiveSectionState(snapshot.sectionId || 'overview');
 
     if (snapshot.topicId !== activeId) {
       preserveNextScrollResetRef.current = true;
-      setActiveIdState(snapshot.topicId);
+      syncActiveTopicState(snapshot.topicId);
     }
-  }, [activeId, activeSectionId, activeTopic?.id, isFullScrollMode]);
+  }, [activeId, activeSectionId, activeTopic?.id, isFullScrollMode, syncActiveSectionState, syncActiveTopicState]);
 
   const gridTemplateColumns = useMemo(() => {
     const left = leftCollapsed ? '72px' : '332px';
@@ -573,35 +1012,103 @@ export default function App() {
     const normalized = nextMode === 'full' ? 'full' : 'topic';
     if (normalized === readMode) return;
 
-    captureLayoutAnchor();
-    preserveNextScrollResetRef.current = true;
-
-    const snapshot = {
+    stopAnimatedScroll();
+    const viewportAnchor = captureReadModeViewportAnchor();
+    const fallbackSnapshot = {
       topicId: activeTopicRef.current || activeTopic?.id || allTopics[0]?.id,
       sectionId: activeSectionRef.current || activeSectionId || 'overview'
     };
+    const snapshot = viewportAnchor || fallbackSnapshot;
+    forceHydrateTopic(snapshot.topicId);
+    createReadModeFreezeOverlay();
 
-    fullScrollSnapshotRef.current = snapshot;
-    activeSectionRef.current = snapshot.sectionId || 'overview';
-    setActiveSectionId(snapshot.sectionId || 'overview');
+    const applyModeChange = () => {
+      preserveNextScrollResetRef.current = true;
+      fullScrollSnapshotRef.current = {
+        topicId: snapshot.topicId,
+        sectionId: snapshot.sectionId || 'overview'
+      };
+      activeSectionRef.current = snapshot.sectionId || 'overview';
+      setActiveSectionId(snapshot.sectionId || 'overview');
 
-    if (normalized === 'topic' && snapshot.topicId && snapshot.topicId !== activeId) {
-      activeTopicRef.current = snapshot.topicId;
-      setActiveIdState(snapshot.topicId);
+      if (normalized === 'topic' && snapshot.topicId && snapshot.topicId !== activeId) {
+        activeTopicRef.current = snapshot.topicId;
+        setActiveIdState(snapshot.topicId);
+      }
+
+      setPauseLazyHydration(true);
+      setReadMode(normalized);
+    };
+
+    if (viewportAnchor) {
+      pendingReadModeViewportAnchorRef.current = viewportAnchor;
+    } else {
+      captureLayoutAnchor();
+      readModeFreezeCleanupTimerRef.current = window.setTimeout(() => {
+        clearReadModeFreezeOverlay();
+        resumeLazyHydrationSoon();
+      }, 240);
     }
 
-    setReadMode(normalized);
-  }, [activeId, activeSectionId, activeTopic?.id, captureLayoutAnchor, readMode]);
+    flushSync(() => {
+      applyModeChange();
+    });
+  }, [
+    activeId,
+    activeSectionId,
+    activeTopic?.id,
+    captureLayoutAnchor,
+    captureReadModeViewportAnchor,
+    clearReadModeFreezeOverlay,
+    createReadModeFreezeOverlay,
+    forceHydrateTopic,
+    readMode,
+    resumeLazyHydrationSoon,
+    stopAnimatedScroll
+  ]);
 
   const openExportDialog = useCallback(() => {
     setExportDialogOpen(true);
   }, []);
 
   const updateMonacoTheme = useCallback((mode, theme) => {
-    setMonacoThemePrefs((current) => normalizeMonacoThemePrefs({
-      ...current,
-      [mode]: theme
-    }));
+    startTransition(() => {
+      setMonacoThemePrefs((current) => normalizeMonacoThemePrefs({
+        ...current,
+        [mode]: theme
+      }));
+    });
+  }, []);
+
+  const updateMermaidTheme = useCallback((mode, field, value) => {
+    startTransition(() => {
+      setMermaidThemePrefs((current) => normalizeMermaidThemePrefs({
+        ...current,
+        [mode]: {
+          ...current[mode],
+          [field]: value
+        }
+      }));
+    });
+  }, []);
+
+  const resetMonacoThemes = useCallback(() => {
+    startTransition(() => {
+      setMonacoThemePrefs(normalizeMonacoThemePrefs(DEFAULT_MONACO_THEME_PREFS));
+    });
+  }, []);
+
+  const resetMermaidThemes = useCallback(() => {
+    startTransition(() => {
+      setMermaidThemePrefs(normalizeMermaidThemePrefs(DEFAULT_MERMAID_THEME_PREFS));
+    });
+  }, []);
+
+  const resetReaderThemes = useCallback(() => {
+    startTransition(() => {
+      setMonacoThemePrefs(normalizeMonacoThemePrefs(DEFAULT_MONACO_THEME_PREFS));
+      setMermaidThemePrefs(normalizeMermaidThemePrefs(DEFAULT_MERMAID_THEME_PREFS));
+    });
   }, []);
 
   const closeExportDialog = useCallback(() => {
@@ -639,8 +1146,12 @@ export default function App() {
   }, [exportScopeLabel, exportTree, selectedExportIds, startExport]);
 
   const renderTopicShell = useCallback((topic, { fullScroll = false, index = 0 } = {}) => {
-    const sectionCount = getSections(topic.content || '').length;
+    const sectionCount = topicSectionsById.get(topic.id)?.length || 0;
     const overviewId = createScopedHeadingId(topic.id, 'overview', fullScroll ? 'full' : 'reader');
+    const forceHydratedForTopic = !fullScroll || topic.id === activeTopic.id || forcedHydratedTopicIds.has(topic.id);
+    const shellClassName = fullScroll
+      ? `full-scroll-topic-shell${index === 0 ? '' : ' mt-12'}${forceHydratedForTopic ? ' is-force-hydrated' : ''}`
+      : '';
 
     return (
       <section
@@ -648,7 +1159,8 @@ export default function App() {
         data-topic-shell="true"
         data-topic-id={topic.id}
         data-topic-title={topic.title}
-        className={fullScroll ? `full-scroll-topic-shell${index === 0 ? '' : ' mt-12'}` : ''}
+        data-force-hydrated={forceHydratedForTopic ? 'true' : undefined}
+        className={shellClassName}
       >
         <div
           id={overviewId}
@@ -687,16 +1199,18 @@ export default function App() {
 
         <LazyTopicContent
           topic={topic}
-          darkMode={true}
-          monacoTheme={readerMonacoTheme}
+          darkMode={darkMode}
+          codeThemeStyle={codeThemeStyle}
+          mermaidThemePrefs={deferredMermaidThemePrefs}
           scrollRootRef={scrollRef}
           fullScroll={fullScroll}
+          suspendHydration={pauseLazyHydration}
           sectionCount={sectionCount}
-          forceHydrated={!fullScroll || topic.id === activeTopic.id}
+          forceHydrated={forceHydratedForTopic}
         />
       </section>
     );
-  }, [activeTopic.id, readerMonacoTheme]);
+  }, [activeTopic.id, codeThemeStyle, darkMode, deferredMermaidThemePrefs, forcedHydratedTopicIds, pauseLazyHydration, topicSectionsById]);
 
   return (
     <div ref={appShellRef} className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)] transition-colors">
@@ -740,6 +1254,11 @@ export default function App() {
             setRightCollapsed={setRightCollapsedAnchored}
             monacoThemePrefs={monacoThemePrefs}
             onMonacoThemeChange={updateMonacoTheme}
+            onResetMonacoThemes={resetMonacoThemes}
+            mermaidThemePrefs={mermaidThemePrefs}
+            onMermaidThemeChange={updateMermaidTheme}
+            onResetMermaidThemes={resetMermaidThemes}
+            onResetReaderThemes={resetReaderThemes}
             onOpenExportDialog={openExportDialog}
             fullScrollMode={isFullScrollMode}
             isFullscreen={isFullscreen}
@@ -757,6 +1276,7 @@ export default function App() {
 
         <Toc
           topic={activeTopic}
+          sections={activeTopicSections}
           activeSectionId={activeSectionId}
           onJump={handleTocJump}
           collapsed={rightCollapsed}
