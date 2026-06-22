@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { BookMarked, Download, Menu, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun } from 'lucide-react';
+import { BookMarked, Download, Maximize2, Menu, Minimize2, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun } from 'lucide-react';
 import { MONACO_THEME_OPTIONS } from '../utils/monacoThemes.js';
 
 function Topbar({
@@ -15,6 +15,8 @@ function Topbar({
   onMonacoThemeChange,
   onOpenExportDialog,
   fullScrollMode,
+  isFullscreen,
+  onToggleFullscreen,
   readMode = 'topic',
   onReadModeChange
 }) {
@@ -75,6 +77,15 @@ function Topbar({
           </div>
           <button type="button" onClick={() => setRightCollapsed((v) => !v)} className="hidden rounded-xl border border-[var(--border)] p-2 text-[var(--muted)] hover:bg-[var(--panel-hover)] xl:inline-flex" title={rightCollapsed ? 'Expand right outline' : 'Collapse right outline'}>
             {rightCollapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            aria-pressed={isFullscreen}
+            className="rounded-xl border border-[var(--border)] p-2 text-[var(--muted)] hover:bg-[var(--panel-hover)]"
+            title={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+          >
+            {isFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
           </button>
           <div ref={themePanelRef} className="relative">
             <button type="button" onClick={() => setThemePanelOpen((value) => !value)} className="rounded-xl border border-[var(--border)] p-2 text-[var(--muted)] hover:bg-[var(--panel-hover)]" title="Configure Monaco themes">

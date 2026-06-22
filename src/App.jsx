@@ -67,6 +67,25 @@ function escapeSelectorValue(value = '') {
   return window.CSS?.escape ? window.CSS.escape(value) : String(value).replace(/"/g, '\\"');
 }
 
+function getFullscreenElement() {
+  if (typeof document === 'undefined') return null;
+  return document.fullscreenElement || document.webkitFullscreenElement || null;
+}
+
+function requestElementFullscreen(element) {
+  if (!element) return Promise.resolve();
+  if (element.requestFullscreen) return element.requestFullscreen();
+  if (element.webkitRequestFullscreen) return element.webkitRequestFullscreen();
+  return Promise.resolve();
+}
+
+function exitElementFullscreen() {
+  if (typeof document === 'undefined') return Promise.resolve();
+  if (document.exitFullscreen) return document.exitFullscreen();
+  if (document.webkitExitFullscreen) return document.webkitExitFullscreen();
+  return Promise.resolve();
+}
+
 export default function App() {
   const [rawQuery, setRawQuery] = useState('');
   const debouncedQuery = useDebouncedValue(rawQuery, 70);
@@ -81,7 +100,9 @@ export default function App() {
   const [activeSectionId, setActiveSectionId] = useState('overview');
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [readMode, setReadMode] = useState(() => localStorage.getItem('notes:readMode') || 'topic');
+  const [isFullscreen, setIsFullscreen] = useState(() => Boolean(getFullscreenElement()));
 
+  const appShellRef = useRef(null);
   const articleRef = useRef(null);
   const scrollRef = useRef(null);
   const progressRef = useRef(null);
@@ -282,6 +303,20 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('notes:monacoThemes', JSON.stringify(monacoThemePrefs));
   }, [monacoThemePrefs]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      setIsFullscreen(Boolean(getFullscreenElement()));
+    };
+
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    document.addEventListener('webkitfullscreenchange', syncFullscreenState);
+
+    return () => {
+      document.removeEventListener('fullscreenchange', syncFullscreenState);
+      document.removeEventListener('webkitfullscreenchange', syncFullscreenState);
+    };
+  }, []);
 
   useLayoutEffect(() => {
     const anchor = pendingLayoutAnchorRef.current;
@@ -573,6 +608,19 @@ export default function App() {
     setExportDialogOpen(false);
   }, []);
 
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (getFullscreenElement()) {
+        await exitElementFullscreen();
+        return;
+      }
+
+      await requestElementFullscreen(appShellRef.current || document.documentElement);
+    } catch {
+      // Some browsers reject fullscreen requests outside trusted gestures.
+    }
+  }, []);
+
   const startPdfExport = useCallback(() => {
     const plan = buildExportPlan(allTopics, exportTree, selectedExportIds, exportScopeLabel);
     if (!plan.documents.length) return;
@@ -651,7 +699,7 @@ export default function App() {
   }, [activeTopic.id, readerMonacoTheme]);
 
   return (
-    <div className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)] transition-colors">
+    <div ref={appShellRef} className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)] transition-colors">
       <ProgressBar ref={progressRef} />
 
       {sidebarOpen ? (
@@ -694,6 +742,8 @@ export default function App() {
             onMonacoThemeChange={updateMonacoTheme}
             onOpenExportDialog={openExportDialog}
             fullScrollMode={isFullScrollMode}
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={toggleFullscreen}
             readMode={readMode}
             onReadModeChange={switchReadMode}
           />
