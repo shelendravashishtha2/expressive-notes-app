@@ -1,4 +1,4 @@
-# Tech Notes
+# Tech Notes [@notes.shelendra.com](https://notes.shelendra.com)
 
 A polished Vite + React study app for reading, searching, and exporting long-form technical notes.
 
