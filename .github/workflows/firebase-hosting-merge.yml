@@ -34,7 +34,9 @@ jobs:
           pnpm -v
 
       - name: Install dependencies
+        env: ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true
         run: pnpm install --no-frozen-lockfile
+
 
       - name: Build app
         run: pnpm run build
