@@ -8,6 +8,11 @@ on:
     branches:
       - master
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
 jobs:
   build_and_deploy:
     runs-on: ubuntu-latest
@@ -16,27 +21,27 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22.22.2
-
-      - name: Enable Corepack
-        run: corepack enable
-
-      - name: Setup pnpm
-        run: corepack prepare pnpm@10.0.0 --activate
+          cache: pnpm
 
       - name: Show versions
         run: |
           node -v
           npm -v
           pnpm -v
+          pwd
+          ls -la
 
       - name: Install dependencies
-        env: ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true
         run: pnpm install --no-frozen-lockfile
-
 
       - name: Build app
         run: pnpm run build
