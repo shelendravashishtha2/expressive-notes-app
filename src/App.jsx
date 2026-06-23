@@ -1171,7 +1171,7 @@ export default function App() {
           className="scroll-mt-28"
         />
 
-        <div className="hero-card mb-8 overflow-hidden rounded-[2rem] border p-6 shadow-xl md:p-8">
+        <div className="hero-card mb-8 overflow-hidden rounded-[2rem] border p-6 md:p-8">
           <div className="mb-5 flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[var(--accent-strong)]">{topic.group || topic.domain}</span>
             <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-1 text-xs font-semibold text-[var(--muted)]">

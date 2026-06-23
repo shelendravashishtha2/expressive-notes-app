@@ -152,7 +152,7 @@ const CodeBlock = memo(function CodeBlock({
 
   return (
     <div
-      className="code-shell group my-7 overflow-hidden rounded-[1.6rem] border border-[var(--code-border)] bg-[var(--code-bg)] shadow-[0_24px_48px_-24px_rgba(2,6,23,0.6)]"
+      className="code-shell group my-7 overflow-hidden rounded-[1.6rem] border border-[var(--code-border)] bg-[var(--code-bg)]"
       data-code-block="true"
     >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--code-border)] bg-[var(--code-top)] px-4 py-3">
@@ -264,7 +264,7 @@ const MermaidBlock = memo(function MermaidBlock({
   return (
     <div
       ref={containerRef}
-      className="diagram-shell my-7 overflow-hidden rounded-[1.6rem] border border-[var(--border)] bg-[var(--diagram-bg)] shadow-[0_20px_40px_-30px_rgba(37,99,235,0.55)]"
+      className="diagram-shell my-7 overflow-hidden rounded-[1.6rem] border border-[var(--border)] bg-[var(--diagram-bg)]"
       data-mermaid-block="true"
     >
       <div className="border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-black uppercase tracking-[0.16em] text-[var(--accent-strong)]">Mermaid flow diagram</div>
@@ -326,8 +326,8 @@ function MarkdownRenderer({
     ul: ({ children }) => <ul className="my-4 list-disc space-y-2 pl-6 text-[15.8px] leading-8 text-[var(--article-text)]">{children}</ul>,
     ol: ({ children }) => <ol className="my-4 list-decimal space-y-2 pl-6 text-[15.8px] leading-8 text-[var(--article-text)]">{children}</ol>,
     li: ({ children }) => <li className="pl-1 leading-8">{children}</li>,
-    blockquote: ({ children }) => <blockquote className="doc-callout my-7 rounded-[1.4rem] border border-[var(--border)] border-l-[5px] border-l-[var(--accent)] bg-[var(--quote-bg)] px-5 py-4 text-[var(--quote-text)] shadow-[0_18px_35px_-30px_rgba(37,99,235,0.55)]">{children}</blockquote>,
-    table: ({ children }) => <div className="doc-table-shell my-7 overflow-x-auto rounded-[1.4rem] border border-[var(--border)] bg-[var(--table-bg)] shadow-[0_16px_34px_-28px_rgba(15,23,42,0.35)]"><table className="min-w-full border-collapse text-left text-sm">{children}</table></div>,
+    blockquote: ({ children }) => <blockquote className="doc-callout my-7 rounded-[1.4rem] border border-[var(--border)] border-l-[5px] border-l-[var(--accent)] bg-[var(--quote-bg)] px-5 py-4 text-[var(--quote-text)]">{children}</blockquote>,
+    table: ({ children }) => <div className="doc-table-shell my-7 overflow-x-auto rounded-[1.4rem] border border-[var(--border)] bg-[var(--table-bg)]"><table className="min-w-full border-collapse text-left text-sm">{children}</table></div>,
     th: ({ children }) => <th className="border-b border-[var(--border)] bg-[var(--table-head)] px-4 py-3 font-black text-[var(--heading)]">{children}</th>,
     td: ({ children }) => <td className="border-b border-[var(--border)] px-4 py-3 align-top text-[var(--article-text)]">{children}</td>,
     pre: ({ children }) => <>{children}</>,
@@ -342,10 +342,10 @@ function MarkdownRenderer({
       if (isBlock) {
         return <CodeBlock code={text} language={language} pdfMode={pdfMode} />;
       }
-      return <code className="rounded-lg border border-[var(--border)] bg-[var(--inline-code-bg)] px-1.5 py-0.5 font-mono text-[0.92em] font-semibold text-[var(--inline-code-text)] shadow-[inset_0_1px_0_rgba(255,255,255,0.3)]">{children}</code>;
+      return <code className="rounded-lg border border-[var(--border)] bg-[var(--inline-code-bg)] px-1.5 py-0.5 font-mono text-[0.92em] font-semibold text-[var(--inline-code-text)]">{children}</code>;
     },
     a: ({ href, children }) => <a href={href} target={isExternalHref(href) ? '_blank' : undefined} rel={isExternalHref(href) ? 'noreferrer' : undefined} className="font-bold text-[var(--link)] underline decoration-[var(--link)]/40 underline-offset-4">{children}</a>,
-    img: ({ src, alt }) => <img src={src} alt={alt || ''} loading="lazy" className="my-6 rounded-2xl border border-[var(--border)] shadow-lg" />
+    img: ({ src, alt }) => <img src={src} alt={alt || ''} loading="lazy" className="my-6 rounded-2xl border border-[var(--border)]" />
   };
 
   return (

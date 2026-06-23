@@ -64,7 +64,7 @@ function LazyTopicContent({
   return (
     <div ref={shellRef} className={`topic-content-shell${forceHydrated ? ' is-force-hydrated' : ''}`}>
       {hydrated ? (
-        <div className="chat-response rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 shadow-sm md:p-8">
+        <div className="chat-response rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 md:p-8">
           <div style={codeThemeStyle}>
             <MarkdownRenderer
               content={topic.content}
@@ -77,7 +77,7 @@ function LazyTopicContent({
         </div>
       ) : (
         <div
-          className="topic-lazy-placeholder rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 shadow-sm md:p-8"
+          className="topic-lazy-placeholder rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 md:p-8"
           style={{ minHeight: `${estimatedHeight}px` }}
         >
           <div className="topic-lazy-meta">

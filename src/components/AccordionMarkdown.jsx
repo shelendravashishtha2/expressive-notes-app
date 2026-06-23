@@ -20,7 +20,7 @@ export default function AccordionMarkdown({ content, expandAll }) {
       {sections.map((section, index) => {
         const isOpen = expandAll || open.has(section.id) || index === 0;
         return (
-          <section key={`${section.id}-${index}`} id={section.id} className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white/70 shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+          <section key={`${section.id}-${index}`} id={section.id} className="scroll-mt-24 rounded-2xl border border-slate-200 bg-white/70 dark:border-slate-800 dark:bg-slate-900/40">
             <button
               type="button"
               onClick={() => toggle(section.id)}

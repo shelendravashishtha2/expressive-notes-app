@@ -18,18 +18,18 @@ const COLORS = {
   text: [15, 23, 42],
   muted: [71, 85, 105],
   faint: [148, 163, 184],
-  accent: [37, 99, 235],
-  accentDark: [30, 64, 175],
-  accentSoft: [219, 234, 254],
-  accentSofter: [248, 250, 252],
-  accentSurface: [236, 244, 255],
-  border: [191, 219, 254],
+  accent: [22, 163, 74],
+  accentDark: [21, 128, 61],
+  accentSoft: [220, 252, 231],
+  accentSofter: [240, 253, 244],
+  accentSurface: [236, 253, 245],
+  border: [187, 247, 208],
   borderSoft: [226, 232, 240],
   paper: [255, 255, 255],
   white: [255, 255, 255],
-  codeBg: [248, 250, 255],
-  codeTop: [236, 244, 255],
-  codeBorder: [191, 219, 254],
+  codeBg: [248, 252, 249],
+  codeTop: [236, 253, 245],
+  codeBorder: [187, 247, 208],
   codeText: [15, 23, 42],
   codeLineNo: [100, 116, 139],
   codeComment: [14, 116, 144],
@@ -40,13 +40,15 @@ const COLORS = {
   codeOperator: [220, 38, 38],
   codePunctuation: [71, 85, 105],
   codeProperty: [234, 88, 12],
-  quoteBg: [239, 246, 255],
-  quoteBorder: [96, 165, 250],
-  tableHead: [226, 232, 255],
+  quoteBg: [240, 253, 244],
+  quoteBorder: [74, 222, 128],
+  tableHead: [220, 252, 231],
   tableOdd: [255, 255, 255],
   tableEven: [248, 250, 252],
   tocDots: [148, 163, 184]
 };
+
+const SUMMARY_TEXT = 'This document includes only your selected notes and sections. App controls, sidebars, live navigation, and interactive editor chrome are intentionally excluded.';
 
 const JS_KEYWORDS = [
   'async', 'await', 'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger', 'default',
@@ -844,7 +846,7 @@ function drawCodeLikeBlock(pdf, cursor, block) {
   const headerHeight = 8.4;
   const paddingX = 4;
   const paddingY = 3.5;
-  const after = 5.5;
+  const after = 8.2;
   const bodyWidth = cursor.width - paddingX * 2;
   const { displayLines, gutterWidth } = buildDisplayCodeLines(pdf, block.text, bodyWidth, fontSize);
   let index = 0;
@@ -1004,37 +1006,37 @@ function drawFigure(pdf, cursor, block) {
 
 function drawDocumentHeader(pdf, cursor, document, destinations, documentIndex = 0, totalDocuments = 1) {
   const chapterLabel = `Chapter ${String(documentIndex + 1).padStart(2, '0')}`;
-  const titleLines = splitToLines(pdf, document.topicTitle, cursor.width - 30);
-  const titleLineHeight = mmLineHeight(19.5, 1.14);
-  const boxHeight = Math.max(50, titleLines.length * titleLineHeight + 28);
-  ensureSpace(pdf, cursor, boxHeight + 28);
+  const titleLines = splitToLines(pdf, document.topicTitle, cursor.width - 24);
+  const titleLineHeight = mmLineHeight(17.2, 1.14);
+  const boxHeight = Math.max(36, titleLines.length * titleLineHeight + 20);
+  ensureSpace(pdf, cursor, boxHeight + 24);
   destinations.set(`topic:${document.topicId}`, { page: pdf.getNumberOfPages(), top: cursor.y - 2 });
 
-  const boxY = cursor.y - 4;
-  pdf.setFillColor(...COLORS.accentSofter);
+  const boxY = cursor.y - 2.5;
+  pdf.setFillColor(...COLORS.white);
   pdf.setDrawColor(...COLORS.border);
-  pdf.roundedRect(cursor.x, boxY, cursor.width, boxHeight, 5, 5, 'FD');
+  pdf.roundedRect(cursor.x, boxY, cursor.width, boxHeight, 4, 4, 'FD');
   pdf.setFillColor(...COLORS.accent);
-  pdf.roundedRect(cursor.x + 4, boxY + 5, 18, 18, 3, 3, 'F');
+  pdf.roundedRect(cursor.x + 3.5, boxY + 4.2, 14, 14, 2.5, 2.5, 'F');
 
-  withFont(pdf, 'helvetica', 'bold', 12, COLORS.white);
-  pdf.text(String(documentIndex + 1), cursor.x + 13, boxY + 16.5, { align: 'center' });
+  withFont(pdf, 'helvetica', 'bold', 10.4, COLORS.white);
+  pdf.text(String(documentIndex + 1), cursor.x + 10.5, boxY + 13.5, { align: 'center' });
 
-  withFont(pdf, 'helvetica', 'bold', 8.4, COLORS.accentDark);
-  pdf.text(chapterLabel, cursor.x + 26, boxY + 12);
-  pdf.text(`${documentIndex + 1} / ${totalDocuments}`, cursor.x + cursor.width - 4, boxY + 12, { align: 'right' });
+  withFont(pdf, 'helvetica', 'bold', 7.9, COLORS.accentDark);
+  pdf.text(chapterLabel, cursor.x + 21, boxY + 9.6);
+  pdf.text(`${documentIndex + 1} / ${totalDocuments}`, cursor.x + cursor.width - 4, boxY + 9.6, { align: 'right' });
 
-  withFont(pdf, 'helvetica', 'bold', 9.2, COLORS.muted);
-  pdf.text(normalizePdfText(document.topicGroup || document.domain || 'Reference'), cursor.x + 26, boxY + 19.5);
+  withFont(pdf, 'helvetica', 'bold', 8.4, COLORS.muted);
+  pdf.text(normalizePdfText(document.topicGroup || document.domain || 'Reference'), cursor.x + 21, boxY + 15.3);
 
-  withFont(pdf, 'helvetica', 'bold', 19.5, COLORS.text);
+  withFont(pdf, 'helvetica', 'bold', 17.2, COLORS.text);
   titleLines.forEach((line, offset) => {
-    pdf.text(normalizePdfText(line), cursor.x + 4, boxY + 31 + offset * titleLineHeight);
+    pdf.text(normalizePdfText(line), cursor.x + 4, boxY + 24 + offset * titleLineHeight);
   });
-  cursor.y = boxY + boxHeight + 8.5;
+  cursor.y = boxY + boxHeight + 6.2;
 
   if (document.summary) {
-    writeWrappedParagraph(pdf, cursor, document.summary, { size: 10.5, color: COLORS.muted, after: 4.8 });
+    writeWrappedParagraph(pdf, cursor, document.summary, { size: 10.4, color: COLORS.muted, after: 4.2 });
   }
 
   const metaBits = [
@@ -1042,10 +1044,10 @@ function drawDocumentHeader(pdf, cursor, document, destinations, documentIndex =
     `Mode: ${document.includeFullTopic ? 'Full topic export' : 'Selected sections only'}`,
     document.tocEntries?.length ? `Sections: ${document.tocEntries.length}` : 'Topic-level export'
   ];
-  writeWrappedParagraph(pdf, cursor, metaBits.join('  •  '), { size: 8.9, color: COLORS.muted, after: 3.2 });
+  writeWrappedParagraph(pdf, cursor, metaBits.join('  •  '), { size: 8.7, color: COLORS.muted, after: 2.8 });
 
   if (document.sourceFiles?.length) {
-    writeWrappedParagraph(pdf, cursor, `Source files: ${document.sourceFiles.join(', ')}`, { size: 8.4, color: COLORS.muted, after: 4.8 });
+    writeWrappedParagraph(pdf, cursor, `Source files: ${document.sourceFiles.join(', ')}`, { size: 8.3, color: COLORS.muted, after: 4.2 });
   }
   drawRule(pdf, cursor);
 }
@@ -1189,41 +1191,62 @@ function drawDottedLeader(pdf, startX, endX, y) {
   pdf.setLineDashPattern([], 0);
 }
 
-function reserveTocPages(pdf, documents) {
+function buildTocEntries(plan) {
   const entries = [];
-  documents.forEach((document) => {
-    entries.push({ label: document.topicTitle, level: 1 });
-    (document.tocEntries || []).forEach((section) => entries.push({ label: section.title, level: section.level }));
-  });
-
-  const estimatedLines = entries.reduce((sum, entry) => {
-    const charsPerLine = entry.level <= 1 ? 58 : entry.level === 2 ? 64 : 70;
-    return sum + Math.max(1, Math.ceil(normalizePdfText(entry.label).length / charsPerLine));
-  }, 0);
-  const firstPageCapacity = 20;
-  const followingPageCapacity = 31;
-  const tocPageCount = Math.max(
-    2,
-    1 + Math.ceil(Math.max(0, estimatedLines - firstPageCapacity) / followingPageCapacity) + 1
-  );
-  const tocStartPage = 2;
-  for (let index = 0; index < tocPageCount; index += 1) pdf.addPage();
-  return { tocStartPage, tocPageCount };
-}
-
-
-function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount) {
-  const entries = [];
-  plan.documents.forEach((document, index) => {
+  (plan.documents || []).forEach((document, index) => {
     entries.push({
       label: `${index + 1}. ${document.topicTitle}`,
       level: 1,
       key: `topic:${document.topicId}`
     });
     (document.tocEntries || []).forEach((section) => {
-      entries.push({ label: section.title, level: section.level, key: `heading:${document.topicId}:${section.id}` });
+      entries.push({
+        label: section.title,
+        level: section.level,
+        key: `heading:${document.topicId}:${section.id}`
+      });
     });
   });
+  return entries;
+}
+
+function countTocPages(pdf, plan) {
+  const entries = buildTocEntries(plan);
+  const summaryFontSize = 10.6;
+  const summaryLineHeight = mmLineHeight(summaryFontSize, 1.48);
+  withFont(pdf, 'helvetica', 'normal', summaryFontSize, COLORS.muted);
+  const summaryLines = splitToLines(pdf, SUMMARY_TEXT, CONTENT_WIDTH);
+
+  let pageCount = 1;
+  let y = PAGE.top;
+  y += 28;
+  y += summaryLines.length * summaryLineHeight + 7;
+  y += 34;
+  y += 9;
+
+  entries.forEach((entry) => {
+    const fontSize = entry.level <= 1 ? 11.4 : entry.level === 2 ? 10.1 : 9.4;
+    const indent = entry.level <= 1 ? 0 : entry.level === 2 ? 10 : entry.level === 3 ? 17 : 23;
+    const availableWidth = CONTENT_WIDTH - indent - 18;
+    withFont(pdf, 'helvetica', entry.level <= 1 ? 'bold' : 'normal', fontSize, COLORS.text);
+    const lines = splitToLines(pdf, entry.label, availableWidth);
+    const lineHeight = mmLineHeight(fontSize, entry.level <= 1 ? 1.34 : 1.3);
+    const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + (entry.level <= 1 ? 3.6 : 1.8);
+
+    if (y + blockHeight > PAGE_BOTTOM) {
+      pageCount += 1;
+      y = PAGE.top + 12;
+    }
+
+    y += blockHeight;
+  });
+
+  return Math.max(1, pageCount);
+}
+
+
+function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount, pageOffset = 0) {
+  const entries = buildTocEntries(plan);
 
   for (let offset = 0; offset < tocPageCount; offset += 1) {
     pdf.setPage(tocStartPage + offset);
@@ -1242,8 +1265,8 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
 
   const summaryFontSize = 10.6;
   const summaryLineHeight = mmLineHeight(summaryFontSize, 1.48);
-  const summaryLines = splitToLines(pdf, 'This document includes only your selected notes and sections. App controls, sidebars, live navigation, and interactive editor chrome are intentionally excluded.', CONTENT_WIDTH);
   withFont(pdf, 'helvetica', 'normal', summaryFontSize, COLORS.muted);
+  const summaryLines = splitToLines(pdf, SUMMARY_TEXT, CONTENT_WIDTH);
   pdf.text(summaryLines, PAGE.left, y);
   y += summaryLines.length * summaryLineHeight + 7;
 
@@ -1278,10 +1301,12 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
   entries.forEach((entry) => {
     const destination = destinations.get(entry.key);
     if (!destination) return;
+    const destinationPage = destination.page + pageOffset;
 
     const fontSize = entry.level <= 1 ? 11.4 : entry.level === 2 ? 10.1 : 9.4;
     const indent = entry.level <= 1 ? 0 : entry.level === 2 ? 10 : entry.level === 3 ? 17 : 23;
     const availableWidth = CONTENT_WIDTH - indent - 18;
+    withFont(pdf, 'helvetica', entry.level <= 1 ? 'bold' : 'normal', fontSize, COLORS.text);
     const lines = splitToLines(pdf, entry.label, availableWidth);
     const lineHeight = mmLineHeight(fontSize, entry.level <= 1 ? 1.34 : 1.3);
     const blockHeight = Math.max(lineHeight, lines.length * lineHeight) + (entry.level <= 1 ? 3.6 : 1.8);
@@ -1294,7 +1319,6 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
     }
 
     const x = PAGE.left + indent;
-    withFont(pdf, 'helvetica', entry.level <= 1 ? 'bold' : 'normal', fontSize, COLORS.text);
     const topLineCount = Math.max(0, lines.length - 1);
     for (let index = 0; index < topLineCount; index += 1) {
       pdf.text(lines[index], x, y + index * lineHeight);
@@ -1303,12 +1327,15 @@ function renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount
     const lastLineY = y + topLineCount * lineHeight;
     const lastLine = lines[lines.length - 1] || '';
     pdf.text(lastLine, x, lastLineY);
-    const pageLabel = String(destination.page);
+    const pageLabel = String(destinationPage);
     const pageWidth = pdf.getTextWidth(pageLabel);
     const pageX = PAGE.width - PAGE.right - pageWidth;
     pdf.text(pageLabel, pageX, lastLineY);
     drawDottedLeader(pdf, x + pdf.getTextWidth(lastLine) + 2.8, pageX - 2.4, lastLineY - 0.9);
-    pdf.link(x, y - lineHeight + 1, CONTENT_WIDTH, blockHeight, { pageNumber: destination.page, top: Math.max(0, destination.top) });
+    pdf.link(x, y - lineHeight + 1, CONTENT_WIDTH, blockHeight, {
+      pageNumber: destinationPage,
+      top: Math.max(0, destination.top)
+    });
     y += blockHeight;
   });
 }
@@ -1342,7 +1369,6 @@ async function renderPdf(plan, filename, generatedAt) {
 
   const destinations = new Map();
   renderCover(pdf, plan, generatedAt || new Date().toISOString());
-  const { tocStartPage, tocPageCount } = reserveTocPages(pdf, plan.documents);
 
   pdf.addPage();
   const cursor = createCursor();
@@ -1355,7 +1381,12 @@ async function renderPdf(plan, filename, generatedAt) {
   }
 
   progress('Building clickable table of contents', 88, 'finalizing');
-  renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount);
+  const tocPageCount = countTocPages(pdf, plan);
+  const tocStartPage = 2;
+  for (let index = 0; index < tocPageCount; index += 1) {
+    pdf.insertPage(tocStartPage);
+  }
+  renderSummaryAndToc(pdf, plan, destinations, tocStartPage, tocPageCount, tocPageCount);
 
   progress('Adding page numbers', 94, 'finalizing');
   addPageNumbers(pdf);

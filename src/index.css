@@ -337,7 +337,7 @@ pre { margin: 0; }
 }
 .pdf-kicker {
   margin: 0;
-  color: #1d4ed8;
+  color: #15803d;
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.18em;
@@ -363,10 +363,11 @@ pre { margin: 0; }
 }
 .pdf-meta-card,
 .pdf-summary-card {
-  border: 1px solid #dbeafe;
+  border: 1px solid #bbf7d0;
   border-radius: 18px;
   padding: 14px 16px;
-  background: linear-gradient(180deg, rgba(239, 246, 255, 0.9), rgba(255, 255, 255, 0.96));
+  background: #ffffff;
+  box-shadow: none;
 }
 .pdf-meta-label {
   display: block;
@@ -386,7 +387,7 @@ pre { margin: 0; }
 }
 .pdf-toc-topic-link,
 .pdf-toc-section-link {
-  color: #1d4ed8;
+  color: #15803d;
   text-decoration: none;
 }
 .pdf-toc-topic-link {
@@ -405,7 +406,7 @@ pre { margin: 0; }
 .pdf-toc-section-link.level-4 { padding-left: 24px; }
 .pdf-topic-kicker {
   margin: 0 0 8px;
-  color: #1d4ed8;
+  color: #15803d;
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.16em;
@@ -425,15 +426,17 @@ pre { margin: 0; }
   line-height: 1.7;
 }
 .pdf-code-block {
+  margin: 1rem 0 1.6rem;
   white-space: pre-wrap;
-  background: #0f172a !important;
-  color: #f8fafc !important;
-  border: 1px solid #1e293b;
+  background: #f7fcf8 !important;
+  color: #0f172a !important;
+  border: 1px solid #bbf7d0;
   border-radius: 16px;
   padding: 16px 18px;
   font-size: 12px;
   line-height: 1.6;
   overflow-wrap: anywhere;
+  box-shadow: none;
 }
 .pdf-export-mode { color: #111827 !important; background: #ffffff !important; }
 .pdf-export-mode .monaco-editor,
@@ -444,34 +447,39 @@ pre { margin: 0; }
 .pdf-export-mode .pdf-only {
   display: block !important;
   white-space: pre-wrap !important;
-  background: #0f172a !important;
-  color: #f8fafc !important;
-  border: 1px solid #1e293b !important;
+  margin: 0 0 1.6rem 0 !important;
+  background: #f7fcf8 !important;
+  color: #0f172a !important;
+  border: 1px solid #bbf7d0 !important;
   border-radius: 16px !important;
   padding: 16px 18px !important;
+  box-shadow: none !important;
 }
 .pdf-export-mode .code-shell {
   border-radius: 18px !important;
-  border: 1px solid #cbd5e1 !important;
+  border: 1px solid #bbf7d0 !important;
   overflow: hidden !important;
+  box-shadow: none !important;
 }
 .pdf-export-mode .code-shell > div:first-child {
-  background: #0f172a !important;
-  color: #dbeafe !important;
+  background: #ecfdf5 !important;
+  color: #166534 !important;
 }
 .pdf-export-mode button { display: none !important; }
 .pdf-export-mode table { border-collapse: collapse !important; width: 100% !important; }
 .pdf-export-mode th,
 .pdf-export-mode td { border: 1px solid #cbd5e1 !important; padding: 8px !important; }
 .pdf-export-mode blockquote {
-  border: 1px solid #bfdbfe !important;
-  border-left: 5px solid #2563eb !important;
-  background: #eff6ff !important;
-  color: #1e3a8a !important;
+  border: 1px solid #bbf7d0 !important;
+  border-left: 5px solid #16a34a !important;
+  background: #f0fdf4 !important;
+  color: #166534 !important;
+  box-shadow: none !important;
 }
 .pdf-export-mode .diagram-shell {
-  border: 1px solid #cbd5e1 !important;
-  background: #f8fafc !important;
+  border: 1px solid #bbf7d0 !important;
+  background: #f7fcf8 !important;
+  box-shadow: none !important;
 }
 .pdf-export-mode .diagram-shell svg {
   min-width: 0 !important;
