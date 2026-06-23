@@ -6,6 +6,7 @@ import Topbar from './components/Topbar.jsx';
 import Toc from './components/Toc.jsx';
 import ProgressBar from './components/ProgressBar.jsx';
 import ExportDialog from './components/ExportDialog.jsx';
+import SelectionDialog from './components/SelectionDialog.jsx';
 import ExportStatusToast from './components/ExportStatusToast.jsx';
 import LazyTopicContent from './components/LazyTopicContent.jsx';
 import { useExportTask } from './hooks/useExportTask.js';
@@ -141,24 +142,65 @@ export default function App() {
   const programmaticScrollRef = useRef(false);
   const programmaticScrollReleaseTimerRef = useRef(0);
 
-  const searchIndex = useMemo(() => buildFastSearchIndex(allTopics), []);
-  const searchResults = useMemo(() => searchSectionsFast(searchIndex, debouncedQuery), [searchIndex, debouncedQuery]);
   const exportTree = useMemo(() => buildExportTree(allTopics), []);
-  const topicSectionsById = useMemo(() => {
+  const topicsById = useMemo(() => new Map(allTopics.map((topic) => [topic.id, topic])), []);
+  const [selectedExportIds, setSelectedExportIds] = useState(() => clearSelection());
+  const [exportScopeLabel, setExportScopeLabel] = useState('Custom selection');
+  const [selectionDialogOpen, setSelectionDialogOpen] = useState(false);
+  const [readerSelectionIds, setReaderSelectionIds] = useState(() => clearSelection());
+  const [readerSelectionScopeLabel, setReaderSelectionScopeLabel] = useState('Custom notes selection');
+  const [draftReaderSelectionIds, setDraftReaderSelectionIds] = useState(() => clearSelection());
+  const [draftReaderSelectionScopeLabel, setDraftReaderSelectionScopeLabel] = useState('Custom notes selection');
+
+  const readerSelectionPlan = useMemo(() => {
+    if (!readerSelectionIds.length) return null;
+    const plan = buildExportPlan(allTopics, exportTree, readerSelectionIds, readerSelectionScopeLabel);
+    return plan.documents.length ? plan : null;
+  }, [exportTree, readerSelectionIds, readerSelectionScopeLabel]);
+  const isReaderSelectionMode = Boolean(readerSelectionPlan?.documents.length);
+  const readerSelectionTopics = useMemo(() => {
+    if (!readerSelectionPlan?.documents?.length) return [];
+
+    return readerSelectionPlan.documents.map((document) => {
+      const sourceTopic = topicsById.get(document.topicId) || {};
+      const selectedSectionCount = document.tocSections?.length || 0;
+      const selectionSummary = document.includeFullTopic
+        ? sourceTopic.summary || document.summary || ''
+        : [
+            sourceTopic.summary || document.summary || '',
+            `${selectedSectionCount} selected section${selectedSectionCount === 1 ? '' : 's'} are visible in this custom notes view.`
+          ].filter(Boolean).join(' ');
+
+      return {
+        ...sourceTopic,
+        id: document.topicId,
+        title: document.topicTitle,
+        group: document.topicGroup,
+        domain: document.domain,
+        summary: selectionSummary,
+        sourceFiles: document.sourceFiles || sourceTopic.sourceFiles || [],
+        content: document.markdown || '',
+        selectedSectionCount,
+        includeFullTopic: document.includeFullTopic
+      };
+    });
+  }, [readerSelectionPlan, topicsById]);
+  const readerTopics = isReaderSelectionMode ? readerSelectionTopics : allTopics;
+  const readerTopicSectionsById = useMemo(() => {
     const nextMap = new Map();
-    allTopics.forEach((topic) => {
+    readerTopics.forEach((topic) => {
       nextMap.set(topic.id, getSections(topic.content || ''));
     });
     return nextMap;
-  }, []);
-  const [selectedExportIds, setSelectedExportIds] = useState(() => clearSelection());
-  const [exportScopeLabel, setExportScopeLabel] = useState('Custom selection');
+  }, [readerTopics]);
+  const searchIndex = useMemo(() => buildFastSearchIndex(readerTopics), [readerTopics]);
+  const searchResults = useMemo(() => searchSectionsFast(searchIndex, debouncedQuery), [searchIndex, debouncedQuery]);
 
   const activeTopic = useMemo(
-    () => allTopics.find((topic) => topic.id === activeId) || allTopics[0],
-    [activeId]
+    () => readerTopics.find((topic) => topic.id === activeId) || readerTopics[0] || allTopics[0],
+    [activeId, readerTopics]
   );
-  const activeTopicSections = topicSectionsById.get(activeTopic?.id) || [];
+  const activeTopicSections = readerTopicSectionsById.get(activeTopic?.id) || [];
   const deferredMermaidThemePrefs = useDeferredValue(mermaidThemePrefs);
   const currentSection = useMemo(
     () => activeTopicSections.find((section) => section.id === activeSectionId) || null,
@@ -171,6 +213,7 @@ export default function App() {
     [readerMonacoTheme]
   );
   const selectedExportCount = selectedExportIds.length;
+  const selectedReaderCount = draftReaderSelectionIds.length;
 
   const {
     task: exportTask,
@@ -181,11 +224,11 @@ export default function App() {
 
   const forceHydrateTopic = useCallback((topicId) => {
     if (!topicId) return;
-    const topicIndex = allTopics.findIndex((topic) => topic.id === topicId);
+    const topicIndex = readerTopics.findIndex((topic) => topic.id === topicId);
     const idsToHydrate = [
-      allTopics[topicIndex - 1]?.id,
+      readerTopics[topicIndex - 1]?.id,
       topicId,
-      allTopics[topicIndex + 1]?.id
+      readerTopics[topicIndex + 1]?.id
     ].filter(Boolean);
 
     setForcedHydratedTopicIds((current) => {
@@ -194,7 +237,7 @@ export default function App() {
       idsToHydrate.forEach((id) => next.add(id));
       return next;
     });
-  }, []);
+  }, [readerTopics]);
 
   const queueSectionScroll = useCallback((topicId, sectionId = 'overview', behavior = 'auto') => {
     if (topicId) forceHydrateTopic(topicId);
@@ -492,7 +535,7 @@ export default function App() {
     forceHydrateTopic(topicId);
 
     const normalizedSectionId = sectionId || 'overview';
-    const knownSections = topicSectionsById.get(topicId) || [];
+    const knownSections = readerTopicSectionsById.get(topicId) || [];
     const sectionExists = normalizedSectionId === 'overview'
       || knownSections.some((section) => section.id === normalizedSectionId);
     const { topicShell, target } = resolveScrollTarget(topicId, normalizedSectionId);
@@ -562,7 +605,7 @@ export default function App() {
     resolveScrollTop,
     syncActiveSectionState,
     syncActiveTopicState,
-    topicSectionsById
+    readerTopicSectionsById
   ]);
 
   const captureLayoutAnchor = useCallback(() => {
@@ -1115,6 +1158,16 @@ export default function App() {
     setExportDialogOpen(false);
   }, []);
 
+  const openSelectionDialog = useCallback(() => {
+    setDraftReaderSelectionIds(readerSelectionIds.length ? [...readerSelectionIds] : clearSelection());
+    setDraftReaderSelectionScopeLabel(readerSelectionIds.length ? readerSelectionScopeLabel : 'Custom notes selection');
+    setSelectionDialogOpen(true);
+  }, [readerSelectionIds, readerSelectionScopeLabel]);
+
+  const closeSelectionDialog = useCallback(() => {
+    setSelectionDialogOpen(false);
+  }, []);
+
   const toggleFullscreen = useCallback(async () => {
     try {
       if (getFullscreenElement()) {
@@ -1145,8 +1198,76 @@ export default function App() {
     setExportDialogOpen(false);
   }, [exportScopeLabel, exportTree, selectedExportIds, startExport]);
 
-  const renderTopicShell = useCallback((topic, { fullScroll = false, index = 0 } = {}) => {
-    const sectionCount = topicSectionsById.get(topic.id)?.length || 0;
+  const setDraftReaderSelection = useCallback((nextIds, nextLabel) => {
+    setDraftReaderSelectionIds(nextIds);
+    setDraftReaderSelectionScopeLabel(nextLabel);
+  }, []);
+
+  const handleReaderNodeToggle = useCallback((nodeId, checked) => {
+    setDraftReaderSelectionIds((previous) => applyNodeSelection(exportTree, previous, nodeId, checked));
+    setDraftReaderSelectionScopeLabel('Custom notes selection');
+  }, [exportTree]);
+
+  const selectAllForReader = useCallback(() => {
+    setDraftReaderSelection(createSelectionForAll(exportTree), 'All notes');
+  }, [exportTree, setDraftReaderSelection]);
+
+  const clearDraftReaderSelection = useCallback(() => {
+    setDraftReaderSelection(clearSelection(), 'Custom notes selection');
+  }, [setDraftReaderSelection]);
+
+  const selectCurrentTopicForReader = useCallback(() => {
+    setDraftReaderSelection(
+      createSelectionForTopic(exportTree, activeTopic.id),
+      `Current topic: ${activeTopic.title}`
+    );
+  }, [activeTopic.id, activeTopic.title, exportTree, setDraftReaderSelection]);
+
+  const selectCurrentSectionForReader = useCallback(() => {
+    const sectionId = activeSectionRef.current || activeSectionId || 'overview';
+    const ids = createSelectionForSection(exportTree, activeTopic.id, sectionId);
+    const label = currentSection
+      ? `Current section: ${activeTopic.title} / ${currentSection.title}`
+      : `Current topic: ${activeTopic.title}`;
+    setDraftReaderSelection(ids, label);
+  }, [activeSectionId, activeTopic.id, activeTopic.title, currentSection, exportTree, setDraftReaderSelection]);
+
+  const applyReaderSelection = useCallback(() => {
+    const plan = buildExportPlan(allTopics, exportTree, draftReaderSelectionIds, draftReaderSelectionScopeLabel);
+    const firstDocument = plan.documents[0];
+    if (!firstDocument) return;
+
+    setReaderSelectionIds([...draftReaderSelectionIds]);
+    setReaderSelectionScopeLabel(draftReaderSelectionScopeLabel || 'Custom notes selection');
+
+    const firstSectionId = firstDocument.tocSections?.[0]?.id || 'overview';
+    activeTopicRef.current = firstDocument.topicId;
+    activeSectionRef.current = firstSectionId;
+    fullScrollSnapshotRef.current = {
+      topicId: firstDocument.topicId,
+      sectionId: firstSectionId
+    };
+    setActiveIdState(firstDocument.topicId);
+    setActiveSectionId(firstSectionId);
+    forceHydrateTopic(firstDocument.topicId);
+    setSelectionDialogOpen(false);
+
+    window.requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    });
+  }, [draftReaderSelectionIds, draftReaderSelectionScopeLabel, exportTree, forceHydrateTopic]);
+
+  const removeReaderSelection = useCallback(() => {
+    const emptySelection = clearSelection();
+    setReaderSelectionIds(emptySelection);
+    setReaderSelectionScopeLabel('Custom notes selection');
+    setDraftReaderSelectionIds(emptySelection);
+    setDraftReaderSelectionScopeLabel('Custom notes selection');
+    setSelectionDialogOpen(false);
+  }, []);
+
+  const renderTopicShell = useCallback((topic, { fullScroll = false, index = 0, selectionMode = false } = {}) => {
+    const sectionCount = getSections(topic.content || '').length;
     const overviewId = createScopedHeadingId(topic.id, 'overview', fullScroll ? 'full' : 'reader');
     const forceHydratedForTopic = !fullScroll || topic.id === activeTopic.id || forcedHydratedTopicIds.has(topic.id);
     const shellClassName = fullScroll
@@ -1175,7 +1296,7 @@ export default function App() {
           <div className="mb-5 flex flex-wrap items-center gap-2">
             <span className="rounded-full bg-[var(--accent-soft)] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[var(--accent-strong)]">{topic.group || topic.domain}</span>
             <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-1 text-xs font-semibold text-[var(--muted)]">
-              {fullScroll ? 'continuous cookbook chapter' : 'single topic view'}
+              {selectionMode ? 'selected notes chapter' : fullScroll ? 'continuous cookbook chapter' : 'single topic view'}
             </span>
             <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-3 py-1 text-xs font-semibold text-[var(--muted)]">
               {sectionCount ? `${sectionCount} sections` : 'topic overview'}
@@ -1210,7 +1331,7 @@ export default function App() {
         />
       </section>
     );
-  }, [activeTopic.id, codeThemeStyle, darkMode, deferredMermaidThemePrefs, forcedHydratedTopicIds, pauseLazyHydration, topicSectionsById]);
+  }, [activeTopic.id, codeThemeStyle, darkMode, deferredMermaidThemePrefs, forcedHydratedTopicIds, pauseLazyHydration]);
 
   return (
     <div ref={appShellRef} className="min-h-screen bg-[var(--app-bg)] text-[var(--app-text)] transition-colors">
@@ -1227,7 +1348,7 @@ export default function App() {
 
       <div className="app-grid" style={{ gridTemplateColumns }}>
         <Sidebar
-          topics={allTopics}
+          topics={readerTopics}
           activeId={activeTopic.id}
           onSelect={selectTopic}
           query={rawQuery}
@@ -1260,6 +1381,8 @@ export default function App() {
             onResetMermaidThemes={resetMermaidThemes}
             onResetReaderThemes={resetReaderThemes}
             onOpenExportDialog={openExportDialog}
+            onOpenSelectionDialog={openSelectionDialog}
+            customSelectionActive={isReaderSelectionMode}
             fullScrollMode={isFullScrollMode}
             isFullscreen={isFullscreen}
             onToggleFullscreen={toggleFullscreen}
@@ -1269,8 +1392,8 @@ export default function App() {
 
           <article ref={articleRef} className="chat-article mx-auto max-w-6xl px-4 py-8 md:px-8 lg:px-10 print:max-w-none print:px-0">
             {isFullScrollMode
-              ? allTopics.map((topic, index) => renderTopicShell(topic, { fullScroll: true, index }))
-              : renderTopicShell(activeTopic)}
+              ? readerTopics.map((topic, index) => renderTopicShell(topic, { fullScroll: true, index, selectionMode: isReaderSelectionMode }))
+              : renderTopicShell(activeTopic, { selectionMode: isReaderSelectionMode })}
           </article>
         </main>
 
@@ -1311,6 +1434,26 @@ export default function App() {
         progress={exportTask.progress}
         error={exportTask.error}
         onCancel={cancelExport}
+      />
+
+      <SelectionDialog
+        open={selectionDialogOpen}
+        onClose={closeSelectionDialog}
+        tree={exportTree}
+        selectedIds={draftReaderSelectionIds}
+        selectedCount={selectedReaderCount}
+        scopeLabel={draftReaderSelectionScopeLabel}
+        currentTopicTitle={activeTopic.title}
+        currentSectionTitle={currentSection?.title || 'Overview / topic-level selection'}
+        canSelectCurrentSection={Boolean(activeTopic?.id)}
+        onToggleCheck={handleReaderNodeToggle}
+        onSelectAll={selectAllForReader}
+        onClearDraft={clearDraftReaderSelection}
+        onSelectCurrentTopic={selectCurrentTopicForReader}
+        onSelectCurrentSection={selectCurrentSectionForReader}
+        onApply={applyReaderSelection}
+        onRemoveSelection={removeReaderSelection}
+        hasActiveSelection={isReaderSelectionMode}
       />
     </div>
   );

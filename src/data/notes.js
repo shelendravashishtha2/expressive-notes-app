@@ -69,6 +69,9 @@ const domainMap = {
 
 function inferGroup(note) {
   const text = `${note.group || ''} ${note.domain || ''} ${note.title || ''}`.toLowerCase();
+  if (text.includes('javascript') || text.includes('ecmascript')) return 'JavaScript';
+  if (text.includes('typescript') || text.includes('tsx')) return 'TypeScript';
+  if (text.includes('css') || text.includes('flexbox') || text.includes('grid layout') || text.includes('tailwind')) return 'CSS';
   if (text.includes('aws') || text.includes('cloud')) return 'AWS';
   if (text.includes('flask')) return 'Flask';
   if (text.includes('fastapi')) return 'FastAPI';
@@ -133,8 +136,13 @@ const referenceNotes = allOriginalNotes
     content: note.content?.startsWith('#') ? note.content : `# ${note.title}\n\n${note.content || ''}`
   }));
 
-const groupOrder = ['AWS', 'Python', 'Flask', 'FastAPI', 'React', 'Redux', 'Frontend Concepts', 'Backend Concepts', 'Databases', 'DevOps', 'GenAI', 'Reference', 'Start Here', 'Practice Plan', 'Interview Q&A'];
+const groupOrder = ['AWS', 'Python', 'Flask', 'FastAPI', 'JavaScript', 'React', 'Redux', 'CSS', 'TypeScript', 'Frontend Concepts', 'Backend Concepts', 'Databases', 'DevOps', 'GenAI', 'Reference', 'Start Here', 'Practice Plan', 'Interview Q&A', 'Architecture'];
 const topicOrder = [
+  'frontend-javascript-deep-dive',
+  'react-react-fundamentals','source-fullstack-react-from-scratch-components-state-lifecycles-with-hooks','react-hooks','react-rendering','source-fullstack-react-lifecycle-properly-render-commit-effects-cleanup-and-strict-mode','source-fullstack-react-virtual-dom-reconciliation-keys-memoization-and-intersectionobserver','react-forms','react-routing','react-api-integration','react-performance','core-react-render-performance','react-production-patterns-deep-dive','react-interview-questions',
+  'redux-redux-fundamentals','redux-redux-toolkit','redux-createslice','redux-createasyncthunk','redux-rtk-query','redux-createapi','redux-cache-invalidation','source-fullstack-redux-lifecycle-properly-store-dispatch-reducers-middleware-async-thunks-and-rtk','redux-redux-interview-questions',
+  'frontend-css-deep-dive',
+  'frontend-typescript-deep-dive','source-fullstack-typescript-for-full-stack-react',
   'aws-s3','aws-eventbridge','aws-sns','aws-sqs','aws-sns-sqs-fanout','aws-lambda','aws-step-functions','aws-iam','aws-api-gateway','aws-load-balancers','aws-ecs-fargate','aws-eks-kubernetes','aws-glue','aws-dynamodb','aws-rds-aurora','aws-cloudwatch','aws-terraform','aws-service-selection-guide','aws-large-file-processing'
 ];
 

@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react';
-import { BookMarked, Download, Maximize2, Menu, Minimize2, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun } from 'lucide-react';
+import { BookMarked, Download, ListFilter, Maximize2, Menu, Minimize2, Moon, Palette, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Sun } from 'lucide-react';
 import { MONACO_THEME_OPTIONS } from '../utils/monacoThemes.js';
 import { MERMAID_THEME_OPTIONS } from '../utils/mermaidThemes.js';
 
@@ -39,6 +39,8 @@ function Topbar({
   onResetMermaidThemes,
   onResetReaderThemes,
   onOpenExportDialog,
+  onOpenSelectionDialog,
+  customSelectionActive = false,
   fullScrollMode,
   isFullscreen,
   onToggleFullscreen,
@@ -223,6 +225,13 @@ function Topbar({
           </div>
           <button type="button" onClick={() => setDarkMode((v) => !v)} className="rounded-xl border border-[var(--border)] p-2 text-[var(--muted)] hover:bg-[var(--panel-hover)]" title="Toggle dark mode">
             {darkMode ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSelectionDialog}
+            className={`rounded-xl px-3 py-2 text-xs font-black shadow-sm transition hover:opacity-90 ${customSelectionActive ? 'bg-[var(--accent)] text-white shadow-blue-600/20' : 'border border-[var(--border)] text-[var(--heading)] hover:bg-[var(--panel-hover)]'}`}
+          >
+            <span className="inline-flex items-center gap-1"><ListFilter size={15} /> {customSelectionActive ? 'Selected Notes' : 'Select Notes'}</span>
           </button>
           <button type="button" onClick={onOpenExportDialog} className="rounded-xl bg-[var(--accent)] px-3 py-2 text-xs font-black text-white shadow-sm shadow-blue-600/20 hover:opacity-90">
             <span className="inline-flex items-center gap-1"><Download size={15} /> Export PDF</span>
