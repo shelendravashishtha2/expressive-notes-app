@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, FileText, Search, X } from 'lucide-react';
 
 function useStoredObject(key, fallback) {
@@ -70,9 +70,25 @@ function Sidebar({
 }) {
   const grouped = useMemo(() => groupTopics(topics, groupOrderPreference), [topics, groupOrderPreference]);
   const [openGroups, setOpenGroups] = useStoredObject('notes:openGroups:v2', {});
+  const activeTopicButtonRef = useRef(null);
 
   const isGroupOpen = (group) => openGroups[group] ?? true;
   const toggleGroup = (group) => setOpenGroups((prev) => ({ ...prev, [group]: !(prev[group] ?? true) }));
+
+  useEffect(() => {
+    if (!activeId || collapsed || query.trim()) return;
+    const activeGroup = grouped.find(([, items]) => items.some((item) => item.id === activeId))?.[0];
+    if (!activeGroup || openGroups[activeGroup] !== false) return;
+    setOpenGroups((previous) => ({ ...previous, [activeGroup]: true }));
+  }, [activeId, collapsed, grouped, openGroups, query, setOpenGroups]);
+
+  useEffect(() => {
+    if (!activeId || collapsed || query.trim()) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      activeTopicButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeId, collapsed, query]);
 
   return (
     <aside className={`${isOpen ? 'translate-x-0' : '-translate-x-full'} sidebar-panel fixed inset-y-0 left-0 z-50 border-r border-[var(--border)] bg-[var(--sidebar)] transition-transform lg:sticky lg:top-0 lg:z-auto lg:h-screen lg:translate-x-0 ${collapsed ? 'sidebar-collapsed' : ''}`}>
@@ -158,6 +174,7 @@ function Sidebar({
                         {items.map((topic) => (
                           <button
                             key={topic.id}
+                            ref={activeId === topic.id ? activeTopicButtonRef : null}
                             type="button"
                             onClick={() => { onSelect(topic.id); onClose?.(); }}
                             className={`nav-topic flex w-full items-center gap-2 rounded-2xl px-3 py-2.5 text-left text-sm font-semibold transition ${activeId === topic.id ? 'active bg-[var(--accent)] text-white shadow-md shadow-blue-600/20' : 'text-[var(--nav-text)] hover:bg-[var(--panel-hover)]'}`}

@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
+import { InlineTopicLoader } from './loaders/AppLoading.jsx';
+import { useGetTopicQuery } from '../features/notes/notesApi.js';
 
 function estimateTopicHeight(markdown = '', sectionCount = 0) {
   const contentLength = markdown.length;
@@ -8,7 +10,7 @@ function estimateTopicHeight(markdown = '', sectionCount = 0) {
   return Math.max(540, Math.min(4200, Math.max(byLength, bySections) + 260));
 }
 
-function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px', suspended = false) {
+function useNearViewport(rootRef, enabled, rootMargin = '5600px 0px 7200px 0px', suspended = false) {
   const targetRef = useRef(null);
   const [nearViewport, setNearViewport] = useState(!enabled);
 
@@ -37,6 +39,17 @@ function useNearViewport(rootRef, enabled, rootMargin = '1400px 0px 1400px 0px',
   return [targetRef, nearViewport];
 }
 
+function mergeTopic(baseTopic = {}, remoteTopic = null) {
+  if (!remoteTopic) return baseTopic;
+  return {
+    ...baseTopic,
+    ...remoteTopic,
+    content: remoteTopic.content ?? remoteTopic.body_markdown ?? baseTopic.content ?? '',
+    sections: remoteTopic.sections?.length ? remoteTopic.sections : baseTopic.sections || [],
+    sourceFiles: remoteTopic.sourceFiles?.length ? remoteTopic.sourceFiles : baseTopic.sourceFiles || []
+  };
+}
+
 function LazyTopicContent({
   topic,
   darkMode,
@@ -46,53 +59,70 @@ function LazyTopicContent({
   fullScroll = false,
   suspendHydration = false,
   sectionCount = 0,
-  forceHydrated = false
+  forceHydrated = false,
+  onTopicLoaded
 }) {
-  const [shellRef, nearViewport] = useNearViewport(scrollRootRef, fullScroll, '1400px 0px 1400px 0px', suspendHydration);
+  const [shellRef, nearViewport] = useNearViewport(scrollRootRef, fullScroll, '5600px 0px 7200px 0px', suspendHydration);
   const [hydrated, setHydrated] = useState(!fullScroll || forceHydrated);
+  const shouldFetch = Boolean(topic?.id) && (hydrated || nearViewport || forceHydrated || Boolean(topic?.content));
+  const topicQuery = useGetTopicQuery(topic?.id, {
+    skip: !shouldFetch,
+    refetchOnMountOrArgChange: false
+  });
+  const renderedTopic = useMemo(() => mergeTopic(topic, topicQuery.data), [topic, topicQuery.data]);
+  const hasRenderableContent = Boolean(renderedTopic?.content);
   const estimatedHeight = useMemo(
-    () => estimateTopicHeight(topic?.content || '', sectionCount),
-    [sectionCount, topic?.content]
+    () => estimateTopicHeight(renderedTopic?.content || topic?.content || '', sectionCount || renderedTopic?.section_count || 0),
+    [renderedTopic?.content, renderedTopic?.section_count, sectionCount, topic?.content]
   );
 
   useEffect(() => {
-    if (nearViewport || forceHydrated) {
+    if (nearViewport || forceHydrated || renderedTopic?.content) {
       setHydrated(true);
     }
-  }, [forceHydrated, nearViewport]);
+  }, [forceHydrated, nearViewport, renderedTopic?.content]);
+
+  useEffect(() => {
+    if (topicQuery.data?.id) {
+      onTopicLoaded?.(topicQuery.data);
+    }
+  }, [onTopicLoaded, topicQuery.data]);
+
+  const showInlineLoader = hydrated && !hasRenderableContent && !topicQuery.isError;
+  const showSyncRibbon = hydrated && hasRenderableContent && topicQuery.isFetching && !topicQuery.data;
 
   return (
     <div ref={shellRef} className={`topic-content-shell${forceHydrated ? ' is-force-hydrated' : ''}`}>
       {hydrated ? (
-        <div className="chat-response rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 md:p-8">
-          <div style={codeThemeStyle}>
-            <MarkdownRenderer
-              content={topic.content}
-              darkMode={darkMode}
-              mermaidThemePrefs={mermaidThemePrefs}
-              topicId={topic.id}
-              headingIdPrefix={`${topic.id}__reader__`}
-            />
+        showInlineLoader ? (
+          <InlineTopicLoader message="Loading..." minHeight="320px" />
+        ) : (
+          <div className="chat-response rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 md:p-8">
+            {showSyncRibbon ? (
+              <div className="mb-5 rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-black uppercase tracking-[0.14em] text-[var(--accent-strong)]">
+                Syncing latest copy in the background
+              </div>
+            ) : null}
+
+            {topicQuery.isError && !hasRenderableContent ? (
+              <div className="rounded-2xl border border-dashed border-[var(--border)] p-6 text-sm font-semibold text-[var(--muted)]">
+                Could not load this topic right now. Please retry once the backend is awake.
+              </div>
+            ) : (
+              <div style={codeThemeStyle}>
+                <MarkdownRenderer
+                  content={renderedTopic.content || ''}
+                  darkMode={darkMode}
+                  mermaidThemePrefs={mermaidThemePrefs}
+                  topicId={renderedTopic.id}
+                  headingIdPrefix={`${renderedTopic.id}__reader__`}
+                />
+              </div>
+            )}
           </div>
-        </div>
+        )
       ) : (
-        <div
-          className="topic-lazy-placeholder rounded-[2rem] border border-[var(--border)] bg-[var(--article-bg)] p-5 md:p-8"
-          style={{ minHeight: `${estimatedHeight}px` }}
-        >
-          <div className="topic-lazy-meta">
-            <span>{sectionCount} sections queued</span>
-            <span>Loading near viewport</span>
-          </div>
-          <div className="topic-lazy-bars">
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
+        <InlineTopicLoader message="Loading..." minHeight={`${estimatedHeight}px`} />
       )}
     </div>
   );

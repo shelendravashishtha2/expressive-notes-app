@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { ChevronsLeft, ChevronsRight, ListTree } from 'lucide-react';
 
 function levelClass(level) {
@@ -8,6 +8,15 @@ function levelClass(level) {
 }
 
 function Toc({ topic, sections = [], activeSectionId, onJump, collapsed, setCollapsed }) {
+  const activeSectionButtonRef = useRef(null);
+
+  useEffect(() => {
+    if (!activeSectionId || collapsed) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      activeSectionButtonRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeSectionId, collapsed, topic?.id]);
 
   if (collapsed) {
     return (
@@ -40,6 +49,7 @@ function Toc({ topic, sections = [], activeSectionId, onJump, collapsed, setColl
           {sections.map((section) => (
             <button
               key={section.id}
+              ref={activeSectionId === section.id ? activeSectionButtonRef : null}
               type="button"
               onClick={() => onJump(section)}
               className={`toc-link block w-full rounded-xl px-3 py-2 text-left leading-5 text-[var(--toc-text)] transition hover:bg-[var(--panel-hover)] hover:text-[var(--heading)] ${levelClass(section.level)} ${activeSectionId === section.id ? 'active' : ''}`}

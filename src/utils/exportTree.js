@@ -73,12 +73,17 @@ export function buildExportTree(topics = []) {
   const assignLeaves = (node) => {
     if (!node.children?.length) {
       node.leafIds = [node.id];
+      node.topicNodeIds = node.type === 'topic' ? [node.id] : [];
       node.totalLeaves = 1;
       return node.leafIds;
     }
 
     expandableIds.push(node.id);
     node.leafIds = node.children.flatMap(assignLeaves);
+    node.topicNodeIds = node.children.flatMap((child) => child.topicNodeIds || []);
+    if (node.type === 'topic' && !node.topicNodeIds.includes(node.id)) {
+      node.topicNodeIds = [node.id, ...node.topicNodeIds];
+    }
     node.totalLeaves = node.leafIds.length;
     return node.leafIds;
   };
@@ -95,17 +100,28 @@ export function buildExportTree(topics = []) {
   };
 }
 
+function selectableIdsForNode(node) {
+  return Array.from(new Set([
+    ...(node.leafIds || []),
+    ...(node.topicNodeIds || []),
+    node.type === 'topic' ? node.id : null
+  ].filter(Boolean)));
+}
+
 export function getNodeSelectionState(node, selectedSet = new Set()) {
-  const selectedCount = (node.leafIds || []).reduce(
+  const selectableIds = selectableIdsForNode(node);
+  const selectedCount = selectableIds.reduce(
     (count, id) => count + (selectedSet.has(id) ? 1 : 0),
     0
   );
+  const directTopicSelected = node.type === 'topic' && selectedSet.has(node.id);
+  const totalCount = selectableIds.length || node.totalLeaves || 0;
 
   return {
-    checked: selectedCount > 0 && selectedCount === (node.totalLeaves || 0),
-    indeterminate: selectedCount > 0 && selectedCount < (node.totalLeaves || 0),
+    checked: directTopicSelected || (selectedCount > 0 && selectedCount === totalCount),
+    indeterminate: !directTopicSelected && selectedCount > 0 && selectedCount < totalCount,
     selectedCount,
-    totalCount: node.totalLeaves || 0
+    totalCount
   };
 }
 
@@ -114,16 +130,17 @@ export function applyNodeSelection(tree, selectedIds, nodeId, checked) {
   if (!node) return [...selectedIds];
 
   const next = new Set(selectedIds);
-  (node.leafIds || []).forEach((leafId) => {
-    if (checked) next.add(leafId);
-    else next.delete(leafId);
+  selectableIdsForNode(node).forEach((id) => {
+    if (checked) next.add(id);
+    else next.delete(id);
   });
 
   return Array.from(next);
 }
 
 export function createSelectionForAll(tree) {
-  return [...(tree.leafIds || [])];
+  const topicIds = Array.from(tree.topicNodesByTopicId?.values?.() || []).map((node) => node.id);
+  return Array.from(new Set([...(tree.leafIds || []), ...topicIds]));
 }
 
 export function clearSelection() {
@@ -132,7 +149,7 @@ export function clearSelection() {
 
 export function createSelectionForTopic(tree, topicId) {
   const node = tree.topicNodesByTopicId.get(topicId);
-  return node ? [...(node.leafIds || [])] : [];
+  return node ? selectableIdsForNode(node) : [];
 }
 
 export function createSelectionForSection(tree, topicId, sectionId) {
@@ -153,11 +170,14 @@ export function buildExportPlan(topics, tree, selectedIds, scopeLabel = 'Custom 
     const topicNode = tree.topicNodesByTopicId.get(topic.id);
     if (!topicNode) return;
 
-    const selectedLeafIds = (topicNode.leafIds || []).filter((leafId) => selectedSet.has(leafId));
-    if (!selectedLeafIds.length) return;
+    const directTopicSelected = selectedSet.has(topicNode.id);
+    const selectedLeafIds = directTopicSelected
+      ? [...(topicNode.leafIds || [])]
+      : (topicNode.leafIds || []).filter((leafId) => selectedSet.has(leafId));
+    if (!selectedLeafIds.length && !directTopicSelected) return;
 
     const sections = topicSections(topic);
-    const includeFullTopic = selectedLeafIds.length === (topicNode.leafIds || []).length;
+    const includeFullTopic = directTopicSelected || selectedLeafIds.length === (topicNode.leafIds || []).length;
     const chosenSections = includeFullTopic
       ? sections
       : sections.filter((section) => selectedSet.has(`section:${topic.id}:${section.id}`));
