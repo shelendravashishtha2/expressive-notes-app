@@ -1,24 +1,21 @@
-# Loader Optimization Fixes
+# Loader Replacement Notes
 
-## What was causing the freeze
-
-The previous loader used a canvas animation with `requestAnimationFrame()` and `getImageData()` every frame. When multiple loader sections or lazy placeholders were visible, the browser had to read and rewrite thousands of pixels repeatedly, which could freeze scrolling and make the side panels feel stuck.
+The previous canvas/blob loader has been removed from the runtime loader path and replaced with a lightweight pure CSS four-dash loader based on the requested CodePen animation pattern.
 
 ## What changed
 
-- Replaced the canvas loader with a pure CSS ambient blob layer.
-- Removed all runtime pixel processing from loader animations.
-- Kept the loader as a section-level background layer instead of rendering it inside each content container.
-- Kept colors theme-aware through `var(--accent)`, `var(--accent-soft)`, `var(--article-bg)`, `var(--panel-soft)`, and related variables.
-- Added reduced-motion support.
-- Fixed lazy topic fetching so far-away full-scroll topics do not fetch just because their content is empty.
+- Replaced the canvas animation in `src/components/loaders/AppLoading.jsx` with a reusable CSS dash loader.
+- Added a tiny `Loading... <percentage>%` label directly above the loader for startup, inline topic loading, and full-scroll tail loading. Full-scroll tail loading receives the app's real visible-topic percentage; startup/topic fetch placeholders use a capped loading estimate because the current fetch layer does not expose byte-level progress.
+- Kept the loader animation infinite while the loading component is mounted.
+- Bound all loader colors/glow/card surfaces to the app theme variables: `--accent`, `--accent-strong`, `--article-bg`, `--app-bg`, `--panel-soft`, and `--border`.
+- Preserved the existing public exports: `AppStartupLoader`, `InlineTopicLoader`, `InlineContentLoader`, `FullScrollTailLoader`, `SyncStatusDock`, `SectionBlobLoader`, and the default `BlobLoader`.
 
-## Files changed
+## Files updated
 
 - `src/components/loaders/AppLoading.jsx`
-- `src/components/LazyTopicContent.jsx`
 - `src/index.css`
+- `dist/` regenerated via `npm run build`
 
-## Build
+## Validation
 
-`npm run build` passes.
+`npm run build` completed successfully.

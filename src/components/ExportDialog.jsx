@@ -31,6 +31,7 @@ function ExportDialog({
   progress,
   error,
   onCancel,
+  isPreparingTree = false,
 }) {
   const [expandedIds, setExpandedIds] = useState(
     () => new Set(tree.expandableIds),
@@ -130,7 +131,7 @@ function ExportDialog({
                     {scopeLabel}
                   </p>
                   <p className="mt-1 text-sm text-[var(--muted)]">
-                    {selectedCount} leaf selections currently checked.
+                    {selectedCount} selectable items currently checked.
                   </p>
                 </div>
 
@@ -189,23 +190,38 @@ function ExportDialog({
               </div>
 
               <div className="export-tree-panel min-h-[18rem] flex-1 overflow-y-auto rounded-[1.5rem] border border-[var(--border)] bg-[var(--search-bg)] p-3 sm:min-h-0 sm:p-4">
-                <ExportTree
-                  tree={tree}
-                  selectedIds={selectedIds}
-                  expandedIds={expandedIds}
-                  disabled={isBusy}
-                  onToggleCheck={(nodeId, checked) =>
-                    onToggleCheck(nodeId, checked, selectedSet)
-                  }
-                  onToggleExpand={(nodeId) => {
-                    setExpandedIds((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(nodeId)) next.delete(nodeId);
-                      else next.add(nodeId);
-                      return next;
-                    });
-                  }}
-                />
+                {isPreparingTree ? (
+                  <div className="flex min-h-[22rem] flex-col items-center justify-center rounded-[1.25rem] border border-dashed border-[var(--border)] bg-[var(--panel-soft)] px-6 text-center">
+                    <div className="relative mb-5 h-14 w-14">
+                      <span className="absolute inset-0 rounded-full border-4 border-[var(--accent-soft)]" />
+                      <span className="absolute inset-0 animate-spin rounded-full border-4 border-transparent border-t-[var(--accent)]" />
+                    </div>
+                    <p className="text-sm font-black uppercase tracking-[0.16em] text-[var(--accent-strong)]">
+                      Preparing full nested tree
+                    </p>
+                    <p className="mt-2 max-w-md text-sm leading-6 text-[var(--muted)]">
+                      Loading complete topic bodies first, so sections and subsections do not collapse into unusable topic-only rows.
+                    </p>
+                  </div>
+                ) : (
+                  <ExportTree
+                    tree={tree}
+                    selectedIds={selectedIds}
+                    expandedIds={expandedIds}
+                    disabled={isBusy}
+                    onToggleCheck={(nodeId, checked) =>
+                      onToggleCheck(nodeId, checked, selectedSet)
+                    }
+                    onToggleExpand={(nodeId) => {
+                      setExpandedIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(nodeId)) next.delete(nodeId);
+                        else next.add(nodeId);
+                        return next;
+                      });
+                    }}
+                  />
+                )}
               </div>
             </div>
           </div>
@@ -237,7 +253,7 @@ function ExportDialog({
                 <button
                   type="button"
                   onClick={onExport}
-                  disabled={isBusy || selectedIds.length === 0}
+                  disabled={isBusy || isPreparingTree || selectedIds.length === 0}
                   className="w-full rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-black text-white shadow-sm shadow-blue-600/20 transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                 >
                   <span className="inline-flex items-center gap-2">

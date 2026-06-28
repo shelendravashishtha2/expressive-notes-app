@@ -39,13 +39,49 @@ function useNearViewport(rootRef, enabled, rootMargin = '5600px 0px 7200px 0px',
   return [targetRef, nearViewport];
 }
 
+function firstString(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim()) || '';
+}
+
+function firstArray(...values) {
+  return values.find((value) => Array.isArray(value)) || [];
+}
+
+function topicContent(topic = {}) {
+  return firstString(
+    topic.content,
+    topic.body_markdown,
+    topic.bodyMarkdown,
+    topic.markdown,
+    topic.markdown_body,
+    topic.rawText,
+    topic.raw_text,
+    topic.body,
+    topic.text,
+    topic.md
+  );
+}
+
+function topicSections(topic = {}) {
+  return firstArray(
+    topic.sections,
+    topic.section_tree,
+    topic.sectionTree,
+    topic.headings,
+    topic.toc,
+    topic.children,
+    topic.subsections,
+    topic.items
+  );
+}
+
 function mergeTopic(baseTopic = {}, remoteTopic = null) {
   if (!remoteTopic) return baseTopic;
   return {
     ...baseTopic,
     ...remoteTopic,
-    content: remoteTopic.content ?? remoteTopic.body_markdown ?? baseTopic.content ?? '',
-    sections: remoteTopic.sections?.length ? remoteTopic.sections : baseTopic.sections || [],
+    content: topicContent(remoteTopic) || topicContent(baseTopic),
+    sections: topicSections(remoteTopic).length ? topicSections(remoteTopic) : topicSections(baseTopic),
     sourceFiles: remoteTopic.sourceFiles?.length ? remoteTopic.sourceFiles : baseTopic.sourceFiles || []
   };
 }
@@ -60,16 +96,17 @@ function LazyTopicContent({
   suspendHydration = false,
   sectionCount = 0,
   forceHydrated = false,
+  lockContent = false,
   onTopicLoaded
 }) {
   const [shellRef, nearViewport] = useNearViewport(scrollRootRef, fullScroll, '5600px 0px 7200px 0px', suspendHydration);
   const [hydrated, setHydrated] = useState(!fullScroll || forceHydrated);
-  const shouldFetch = Boolean(topic?.id) && (hydrated || nearViewport || forceHydrated || Boolean(topic?.content));
+  const shouldFetch = !lockContent && Boolean(topic?.id) && (hydrated || nearViewport || forceHydrated || Boolean(topic?.content));
   const topicQuery = useGetTopicQuery(topic?.id, {
     skip: !shouldFetch,
     refetchOnMountOrArgChange: false
   });
-  const renderedTopic = useMemo(() => mergeTopic(topic, topicQuery.data), [topic, topicQuery.data]);
+  const renderedTopic = useMemo(() => (lockContent ? topic : mergeTopic(topic, topicQuery.data)), [lockContent, topic, topicQuery.data]);
   const hasRenderableContent = Boolean(renderedTopic?.content);
   const estimatedHeight = useMemo(
     () => estimateTopicHeight(renderedTopic?.content || topic?.content || '', sectionCount || renderedTopic?.section_count || 0),
@@ -89,7 +126,7 @@ function LazyTopicContent({
   }, [onTopicLoaded, topicQuery.data]);
 
   const showInlineLoader = hydrated && !hasRenderableContent && !topicQuery.isError;
-  const showSyncRibbon = hydrated && hasRenderableContent && topicQuery.isFetching && !topicQuery.data;
+  const showSyncRibbon = !lockContent && hydrated && hasRenderableContent && topicQuery.isFetching && !topicQuery.data;
 
   return (
     <div ref={shellRef} className={`topic-content-shell${forceHydrated ? ' is-force-hydrated' : ''}`}>

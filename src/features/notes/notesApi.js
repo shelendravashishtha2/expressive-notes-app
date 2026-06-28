@@ -4,18 +4,57 @@ export const DEFAULT_API_BASE_URL = 'https://technical-notes-backend.onrender.co
 
 const configuredBaseUrl = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '');
 
+function firstString(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim()) || '';
+}
+
+function firstArray(...values) {
+  return values.find((value) => Array.isArray(value)) || [];
+}
+
+function unwrapTopicPayload(topic = {}) {
+  if (topic?.topic && typeof topic.topic === 'object') return topic.topic;
+  if (topic?.data && typeof topic.data === 'object') return topic.data;
+  if (topic?.item && typeof topic.item === 'object') return topic.item;
+  return topic || {};
+}
+
 function normalizeTopic(topic = {}) {
+  const source = unwrapTopicPayload(topic);
+  const content = firstString(
+    source.content,
+    source.body_markdown,
+    source.bodyMarkdown,
+    source.markdown,
+    source.markdown_body,
+    source.rawText,
+    source.raw_text,
+    source.body,
+    source.text,
+    source.md
+  );
+  const sections = firstArray(
+    source.sections,
+    source.section_tree,
+    source.sectionTree,
+    source.headings,
+    source.toc,
+    source.children,
+    source.subsections,
+    source.items
+  );
+
   return {
-    ...topic,
-    id: topic.id || topic.slug,
-    slug: topic.slug || topic.id,
-    content: topic.content ?? topic.body_markdown ?? '',
-    body_hash: topic.body_hash || topic.content_hash || topic.bodyHash || '',
-    sections: Array.isArray(topic.sections) ? topic.sections : [],
-    sourceFiles: Array.isArray(topic.sourceFiles)
-      ? topic.sourceFiles
-      : Array.isArray(topic.sources)
-        ? topic.sources.map((source) => source.source_key || source.id).filter(Boolean)
+    ...source,
+    id: source.id || source.slug || source.topicId || source.topic_id,
+    slug: source.slug || source.id || source.topicId || source.topic_id,
+    content,
+    body_hash: source.body_hash || source.content_hash || source.bodyHash || source.hash || '',
+    sections,
+    sourceFiles: Array.isArray(source.sourceFiles)
+      ? source.sourceFiles
+      : Array.isArray(source.sources)
+        ? source.sources.map((item) => item.source_key || item.sourceKey || item.filename || item.name || item.id).filter(Boolean)
         : []
   };
 }
@@ -105,6 +144,7 @@ export const notesApi = createApi({
 export const {
   useGetBootstrapQuery,
   useGetTopicQuery,
+  useLazyGetTopicQuery,
   useLazyHydrateTopicsQuery,
   useSearchSectionsQuery,
   usePrefetch

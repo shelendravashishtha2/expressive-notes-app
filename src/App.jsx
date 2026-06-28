@@ -9,7 +9,7 @@ import SelectionDialog from './components/SelectionDialog.jsx';
 import ExportStatusToast from './components/ExportStatusToast.jsx';
 import LazyTopicContent from './components/LazyTopicContent.jsx';
 import { AppStartupLoader, FullScrollTailLoader, SyncStatusDock } from './components/loaders/AppLoading.jsx';
-import { useGetBootstrapQuery, useLazyHydrateTopicsQuery, usePrefetch, useSearchSectionsQuery } from './features/notes/notesApi.js';
+import { useGetBootstrapQuery, useLazyGetTopicQuery, useLazyHydrateTopicsQuery, usePrefetch, useSearchSectionsQuery } from './features/notes/notesApi.js';
 import { useExportTask } from './hooks/useExportTask.js';
 import {
   applyNodeSelection,
@@ -76,12 +76,65 @@ function useDebouncedValue(value, delay = 180) {
   return debounced;
 }
 
+function firstString(...values) {
+  return values.find((value) => typeof value === 'string' && value.trim()) || '';
+}
+
+function firstArray(...values) {
+  return values.find((value) => Array.isArray(value)) || [];
+}
+
+function resolveTopicContent(topic = {}) {
+  return firstString(
+    topic.content,
+    topic.body_markdown,
+    topic.bodyMarkdown,
+    topic.markdown,
+    topic.markdown_body,
+    topic.rawText,
+    topic.raw_text,
+    topic.body,
+    topic.text,
+    topic.md
+  );
+}
+
+function resolveTopicSections(topic = {}) {
+  return firstArray(
+    topic.sections,
+    topic.section_tree,
+    topic.sectionTree,
+    topic.headings,
+    topic.toc,
+    topic.children,
+    topic.subsections,
+    topic.items
+  );
+}
+
+function sectionHasBody(section = {}) {
+  return Boolean(firstString(
+    section.rawText,
+    section.raw_text,
+    section.markdown,
+    section.content,
+    section.body,
+    section.bodyMarkdown,
+    section.body_markdown,
+    section.markdown_body,
+    section.text,
+    section.md
+  ));
+}
+
 function mergeTopicRecord(metadata = {}, detail = {}) {
-  const content = detail.content ?? detail.body_markdown ?? metadata.content ?? '';
-  const sections = detail.sections?.length
-    ? detail.sections
-    : metadata.sections?.length
-      ? metadata.sections
+  const content = resolveTopicContent(detail) || resolveTopicContent(metadata);
+  const detailSections = resolveTopicSections(detail);
+  const metadataSections = resolveTopicSections(metadata);
+  const sections = detailSections.length
+    ? detailSections
+    : metadataSections.length
+      ? metadataSections
       : content
         ? getSections(content)
         : [];
@@ -89,8 +142,8 @@ function mergeTopicRecord(metadata = {}, detail = {}) {
   return {
     ...metadata,
     ...detail,
-    id: detail.id || metadata.id,
-    slug: detail.slug || metadata.slug || metadata.id,
+    id: detail.id || detail.slug || detail.topicId || detail.topic_id || metadata.id,
+    slug: detail.slug || detail.id || metadata.slug || metadata.id,
     title: detail.title || metadata.title || 'Untitled topic',
     summary: detail.summary ?? metadata.summary ?? '',
     group: detail.group || metadata.group || metadata.domain || 'Reference',
@@ -100,9 +153,9 @@ function mergeTopicRecord(metadata = {}, detail = {}) {
     sourceFiles: detail.sourceFiles?.length
       ? detail.sourceFiles
       : metadata.sourceFiles || [],
-    body_hash: detail.body_hash || detail.content_hash || metadata.body_hash || metadata.content_hash || '',
-    section_count: detail.section_count ?? metadata.section_count ?? sections.length,
-    __remoteReady: Boolean(content),
+    body_hash: detail.body_hash || detail.content_hash || detail.bodyHash || metadata.body_hash || metadata.content_hash || metadata.bodyHash || '',
+    section_count: detail.section_count ?? detail.sectionCount ?? metadata.section_count ?? metadata.sectionCount ?? sections.length,
+    __remoteReady: Boolean(content || sections.some(sectionHasBody)),
   };
 }
 
@@ -156,6 +209,7 @@ export default function App() {
   const bootstrapQuery = useGetBootstrapQuery();
   const prefetchTopic = usePrefetch('getTopic');
   const [hydrateTopicsTrigger] = useLazyHydrateTopicsQuery();
+  const [getTopicTrigger] = useLazyGetTopicQuery();
   const [topicDetailsById, setTopicDetailsById] = useState({});
   const [isPreparingRemoteSelection, setIsPreparingRemoteSelection] = useState(false);
   const [visibleFullTopicCount, setVisibleFullTopicCount] = useState(FULL_SCROLL_INITIAL_COUNT);
@@ -251,8 +305,11 @@ export default function App() {
         summary: selectionSummary,
         sourceFiles: document.sourceFiles || sourceTopic.sourceFiles || [],
         content: document.markdown || '',
+        sections: document.tocSections?.length ? document.tocSections : getSections(document.markdown || ''),
+        section_count: document.tocSections?.length || getSections(document.markdown || '').length,
         selectedSectionCount,
-        includeFullTopic: document.includeFullTopic
+        includeFullTopic: document.includeFullTopic,
+        __selectionLocked: true
       };
     });
   }, [readerSelectionPlan, topicsById]);
@@ -295,6 +352,9 @@ export default function App() {
     [readerTopics, visibleFullTopicCount]
   );
   const fullScrollRemaining = Math.max(0, readerTopics.length - visibleFullScrollTopics.length);
+  const fullScrollLoadedPercent = readerTopics.length
+    ? Math.round((visibleFullScrollTopics.length / readerTopics.length) * 100)
+    : 100;
   const readerMonacoTheme = darkMode ? monacoThemePrefs.dark : monacoThemePrefs.light;
   const codeThemeStyle = useMemo(
     () => getStaticCodeThemeCssVariables(readerMonacoTheme),
@@ -310,39 +370,124 @@ export default function App() {
     resetTask
   } = useExportTask();
 
+  const topicHasUsableTree = useCallback((topic, requireBodies = false) => {
+    if (!topic) return false;
+    if (resolveTopicContent(topic)) return true;
+
+    const sections = resolveTopicSections(topic);
+    if (!sections.length) return false;
+    if (!requireBodies) return true;
+
+    const stack = [...sections];
+    while (stack.length) {
+      const section = stack.pop();
+      if (sectionHasBody(section)) return true;
+      stack.push(...resolveTopicSections(section));
+    }
+
+    return false;
+  }, []);
+
+
   const hydrateTopicsByIds = useCallback(async (topicIds = [], { includeSectionBodies = true } = {}) => {
     const uniqueIds = Array.from(new Set(topicIds.filter(Boolean)));
     if (!uniqueIds.length) return new Map();
 
-    const missingIds = uniqueIds.filter((id) => !topicDetailsById[id]?.content);
+    const requireBodies = Boolean(includeSectionBodies);
+    const existingTopicForId = (id) => topicDetailsById[id] || allTopics.find((topic) => topic.id === id);
+    const missingIds = uniqueIds.filter((id) => !topicHasUsableTree(existingTopicForId(id), requireBodies));
+
     if (!missingIds.length) {
-      return new Map(uniqueIds.map((id) => [id, topicDetailsById[id]]).filter(([, topic]) => Boolean(topic)));
+      return new Map(
+        uniqueIds
+          .map((id) => [id, existingTopicForId(id)])
+          .filter(([, topic]) => Boolean(topic))
+      );
     }
+
+    const hydratedMap = new Map();
+
+    const fetchSingleTopic = async (id) => {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const topic = await getTopicTrigger(id, attempt > 0).unwrap();
+          if (topic?.id) return topic;
+        } catch {
+          // Retry individual topic hydration because the hosted backend can be
+          // cold or rate-limited when the export dialog asks for many topics.
+        }
+      }
+      return null;
+    };
+
+    const hydrateIndividually = async (ids) => {
+      const results = [];
+      const queue = [...ids];
+      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length) {
+          const id = queue.shift();
+          const topic = await fetchSingleTopic(id);
+          if (topic) results.push(topic);
+        }
+      });
+      await Promise.all(workers);
+      return results;
+    };
 
     setIsPreparingRemoteSelection(true);
     try {
-      const hydrated = await hydrateTopicsTrigger({ ids: missingIds, includeSectionBodies }, true).unwrap();
-      const hydratedMap = new Map((hydrated || []).map((topic) => [topic.id, topic]));
+      const chunkSize = 8;
+
+      for (let index = 0; index < missingIds.length; index += chunkSize) {
+        const chunk = missingIds.slice(index, index + chunkSize);
+        try {
+          const hydrated = await hydrateTopicsTrigger({ ids: chunk, includeSectionBodies }, index > 0).unwrap();
+          (hydrated || []).forEach((topic) => {
+            if (topic?.id) hydratedMap.set(topic.id, topic);
+          });
+        } catch {
+          // Fall back below to the single-topic endpoint.
+        }
+      }
+
+      const fallbackIds = missingIds.filter((id) => !topicHasUsableTree(hydratedMap.get(id), requireBodies));
+      if (fallbackIds.length) {
+        const fallbackTopics = await hydrateIndividually(fallbackIds);
+        fallbackTopics.forEach((topic) => {
+          if (topic?.id) hydratedMap.set(topic.id, topic);
+        });
+      }
 
       if (hydratedMap.size) {
         setTopicDetailsById((current) => {
           const next = { ...current };
           hydratedMap.forEach((topic, id) => {
-            next[id] = topic;
+            next[id] = mergeTopicRecord(existingTopicForId(id) || {}, topic);
           });
           return next;
         });
       }
 
-      return new Map(uniqueIds.map((id) => [id, hydratedMap.get(id) || topicDetailsById[id]]).filter(([, topic]) => Boolean(topic)));
+      return new Map(
+        uniqueIds
+          .map((id) => [id, hydratedMap.get(id) || existingTopicForId(id)])
+          .filter(([, topic]) => Boolean(topic))
+      );
     } finally {
-      setIsPreparingRemoteSelection(false);
+      window.requestAnimationFrame(() => setIsPreparingRemoteSelection(false));
     }
-  }, [hydrateTopicsTrigger, topicDetailsById]);
+  }, [allTopics, getTopicTrigger, hydrateTopicsTrigger, topicDetailsById, topicHasUsableTree]);
+
 
   const mergeHydratedTopicList = useCallback((topics, hydratedMap) => (
     topics.map((topic) => hydratedMap.get(topic.id) ? mergeTopicRecord(topic, hydratedMap.get(topic.id)) : topic)
   ), []);
+
+  const ensureSelectionTreeHydrated = useCallback(async () => {
+    const topicIds = allTopics.map((topic) => topic.id).filter(Boolean);
+    if (!topicIds.length) return new Map();
+    return hydrateTopicsByIds(topicIds, { includeSectionBodies: true });
+  }, [allTopics, hydrateTopicsByIds]);
 
   const forceHydrateTopic = useCallback((topicId) => {
     if (!topicId) return;
@@ -1450,7 +1595,8 @@ export default function App() {
 
   const openExportDialog = useCallback(() => {
     setExportDialogOpen(true);
-  }, []);
+    ensureSelectionTreeHydrated();
+  }, [ensureSelectionTreeHydrated]);
 
   const updateMonacoTheme = useCallback((mode, theme) => {
     startTransition(() => {
@@ -1500,7 +1646,8 @@ export default function App() {
     setDraftReaderSelectionIds(readerSelectionIds.length ? [...readerSelectionIds] : clearSelection());
     setDraftReaderSelectionScopeLabel(readerSelectionIds.length ? readerSelectionScopeLabel : 'Custom notes selection');
     setSelectionDialogOpen(true);
-  }, [readerSelectionIds, readerSelectionScopeLabel]);
+    ensureSelectionTreeHydrated();
+  }, [ensureSelectionTreeHydrated, readerSelectionIds, readerSelectionScopeLabel]);
 
   const closeSelectionDialog = useCallback(() => {
     setSelectionDialogOpen(false);
@@ -1528,7 +1675,8 @@ export default function App() {
       { includeSectionBodies: true }
     );
     const hydratedTopics = mergeHydratedTopicList(allTopics, hydratedMap);
-    const plan = buildExportPlan(hydratedTopics, exportTree, selectedExportIds, exportScopeLabel);
+    const hydratedTree = buildExportTree(hydratedTopics);
+    const plan = buildExportPlan(hydratedTopics, hydratedTree, selectedExportIds, exportScopeLabel);
     if (!plan.documents.length) return;
 
     const generatedAt = new Date().toISOString();
@@ -1589,7 +1737,8 @@ export default function App() {
       { includeSectionBodies: true }
     );
     const hydratedTopics = mergeHydratedTopicList(allTopics, hydratedMap);
-    const plan = buildExportPlan(hydratedTopics, exportTree, draftReaderSelectionIds, draftReaderSelectionScopeLabel);
+    const hydratedTree = buildExportTree(hydratedTopics);
+    const plan = buildExportPlan(hydratedTopics, hydratedTree, draftReaderSelectionIds, draftReaderSelectionScopeLabel);
     const firstDocument = plan.documents[0];
     if (!firstDocument) return;
 
@@ -1688,6 +1837,7 @@ export default function App() {
           suspendHydration={pauseLazyHydration}
           sectionCount={sectionCount}
           forceHydrated={forceHydratedForTopic}
+          lockContent={selectionMode || topic.__selectionLocked}
           onTopicLoaded={handleTopicLoaded}
         />
       </section>
@@ -1775,7 +1925,7 @@ export default function App() {
 
             {isFullScrollMode && fullScrollRemaining > 0 ? (
               <div ref={fullScrollLoadMoreRef}>
-                <FullScrollTailLoader remaining={fullScrollRemaining} />
+                <FullScrollTailLoader remaining={fullScrollRemaining} progress={fullScrollLoadedPercent} />
               </div>
             ) : null}
           </article>
@@ -1818,6 +1968,7 @@ export default function App() {
         progress={isPreparingRemoteSelection ? 12 : exportTask.progress}
         error={exportTask.error}
         onCancel={cancelExport}
+        isPreparingTree={isPreparingRemoteSelection}
       />
 
       <SelectionDialog
@@ -1838,6 +1989,7 @@ export default function App() {
         onApply={applyReaderSelection}
         onRemoveSelection={removeReaderSelection}
         hasActiveSelection={isReaderSelectionMode}
+        isPreparing={isPreparingRemoteSelection}
       />
     </div>
   );
