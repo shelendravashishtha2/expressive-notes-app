@@ -48,22 +48,22 @@ function ExportTreeNode({
           {hasChildren ? (isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />) : <ChevronRight size={15} />}
         </button>
 
-        <label className="flex min-w-0 flex-1 items-center gap-3">
+        <label className="flex min-w-0 flex-1 items-start gap-3">
           <input
             ref={inputRef}
             type="checkbox"
             checked={selectionState.checked}
             onChange={(event) => onToggleCheck(node.id, event.target.checked)}
-            className="h-4 w-4 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-[var(--border)] text-[var(--accent)] focus:ring-[var(--accent)]"
             disabled={disabled}
           />
-          <span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-[var(--heading)]">
+          <span className="flex min-w-0 items-start gap-2 text-sm font-semibold leading-5 text-[var(--heading)]">
             <span className="text-[var(--accent-strong)]">{nodeIcon(node)}</span>
-            <span className="truncate">{node.label}</span>
+            <span className="min-w-0 flex-1 break-words">{node.label}</span>
           </span>
         </label>
 
-        <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] text-[var(--muted)]">
+        <span className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.08em] text-[var(--muted)]">
           {selectionState.selectedCount}/{selectionState.totalCount}
         </span>
       </div>

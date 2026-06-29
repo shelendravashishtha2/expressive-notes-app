@@ -205,11 +205,44 @@ pre { margin: 0; }
 .nav-topic.active svg { color: white; }
 .search-result mark { font-weight: 900; }
 
-/* Progress bar uses transform updates through refs, not React state. */
+/* Scroll progress uses transform updates through refs, not React state. */
+.scroll-progress-shell {
+  --scroll-percent: 0%;
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  z-index: 95;
+  height: 0.35rem;
+  background: color-mix(in srgb, var(--panel-soft) 70%, transparent);
+  overflow: visible;
+}
+
 .progress-bar-inner {
   transform-origin: left center;
   transform: scaleX(0);
-  transition: transform 80ms linear;
+  transition: transform 70ms linear;
+  box-shadow: 0 0 1.1rem color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.scroll-progress-shell::after {
+  content: attr(data-progress-label);
+  position: absolute;
+  top: 0.55rem;
+  left: min(calc(var(--scroll-percent) + 0.35rem), calc(100% - 3.25rem));
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--article-bg) 90%, transparent);
+  color: var(--accent-strong);
+  padding: 0.18rem 0.48rem;
+  font-size: 0.65rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.08em;
+  box-shadow: 0 0.65rem 1.5rem rgb(15 23 42 / 0.12);
+  backdrop-filter: blur(14px);
+  pointer-events: none;
 }
 
 /* Static code renderer themed entirely through CSS variables. */
@@ -534,3 +567,312 @@ pre { margin: 0; }
   animation: none !important;
   scroll-behavior: auto !important;
 }
+
+/* =============================================================================
+   THEME-AWARE DASH LOADERS
+   Based on the lightweight four-dash CSS loader structure.
+   ============================================================================= */
+
+:root {
+  --loader-dash-width: 35px;
+  --loader-dash-height: 15px;
+  --loader-dash-gap: 15px;
+  --loader-dash-overlap: -18px;
+  --loader-dash-radius: 999px;
+  --loader-dash-glow: color-mix(in srgb, var(--accent) 28%, white 72%);
+  --loader-card-bg: color-mix(in srgb, var(--article-bg) 88%, transparent);
+  --loader-card-ring: color-mix(in srgb, var(--accent) 18%, var(--border));
+  --loader-card-shadow: 0 1.5rem 4.5rem -2.2rem color-mix(in srgb, var(--accent) 45%, rgb(15 23 42));
+}
+
+.dark {
+  --loader-dash-glow: color-mix(in srgb, var(--accent) 44%, transparent);
+  --loader-card-bg: color-mix(in srgb, var(--article-bg) 84%, transparent);
+  --loader-card-ring: color-mix(in srgb, var(--accent) 24%, var(--border));
+  --loader-card-shadow: 0 1.5rem 4.5rem -2.1rem color-mix(in srgb, var(--accent) 42%, black);
+}
+
+.startup-loader {
+  position: relative;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 2rem;
+  color: var(--app-text);
+}
+
+.startup-loader::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  pointer-events: none;
+  background:
+    linear-gradient(115deg, transparent 0 35%, color-mix(in srgb, var(--accent) 8%, transparent) 46%, transparent 58% 100%);
+  animation: loaderBackdropSweep 5.4s ease-in-out infinite;
+}
+
+.startup-loader-card {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+   margin: auto;
+  display: grid;
+  place-items: center;
+  padding: clamp(2.3rem, 6vw, 3.6rem);
+  border-radius: 2rem;
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  animation: loaderCardEnter 0.42s ease-out both;
+}
+
+.inline-content-loader {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.85rem;
+  overflow: visible;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  color: var(--muted);
+  text-align: center;
+  contain: layout style paint;
+}
+
+.dash-loader-stack {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.82rem;
+  min-width: min(100%, 17rem);
+  pointer-events: none;
+}
+
+.dash-loader-copy {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: clamp(0.72rem, 0.67rem + 0.22vw, 0.88rem);
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-wrap: balance;
+  text-shadow: 0 0 1.1rem color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.dash-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--loader-dash-height) * 3.2);
+  padding: 0.35rem 0.55rem;
+  transform: translateZ(0);
+}
+
+.dash-loader__dash {
+  display: block;
+  flex: 0 0 auto;
+  width: var(--loader-dash-width);
+  height: var(--loader-dash-height);
+  margin: 0 var(--loader-dash-gap);
+  border-radius: var(--loader-dash-radius);
+  background: var(--accent);
+  box-shadow:
+    0 0 10px 0 var(--loader-dash-glow),
+    0 0 26px color-mix(in srgb, var(--accent) 22%, transparent);
+  /* will-change: transform; */
+}
+
+.dash-loader__dash--one {
+  margin-right: var(--loader-dash-overlap);
+  transform-origin: center left;
+  animation: dashSpinOne 3s linear infinite;
+}
+
+.dash-loader__dash--two {
+  transform-origin: center right;
+  animation: dashSpinTwo 3s linear infinite;
+  animation-delay: 0.2s;
+}
+
+.dash-loader__dash--three {
+  transform-origin: center right;
+  animation: dashSpinThree 3s linear infinite;
+  animation-delay: 0.3s;
+}
+
+.dash-loader__dash--four {
+  transform-origin: center right;
+  animation: dashSpinFour 3s linear infinite;
+  animation-delay: 0.4s;
+}
+
+.blob-loader-host {
+  position: relative;
+  overflow: hidden;
+}
+
+.blob-loader-overlay-visual {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  min-height: 9rem;
+  background: color-mix(in srgb, var(--article-bg) 62%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.sync-status-dock {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  max-width: min(calc(100vw - 2rem), 360px);
+  padding: 0.68rem 1.1rem;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: var(--heading);
+  background: color-mix(in srgb, var(--article-bg) 88%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 18%, var(--border)),
+    0 0 0 2px color-mix(in srgb, var(--accent) 6%, transparent),
+    0 8px 32px -4px color-mix(in srgb, var(--accent) 14%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.10);
+  animation: dockSlideIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.sync-status-dock.is-error {
+  color: var(--accent-strong);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 30%, var(--border)),
+    0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent),
+    0 8px 32px -4px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 2px 8px rgb(0 0 0 / 0.10);
+}
+
+.sync-status-pulse {
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+  animation: syncPulse 1.6s ease-out infinite;
+}
+
+.topic-lazy-placeholder,
+.advanced-topic-loader,
+.full-scroll-tail-loader {
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.topic-lazy-placeholder::before,
+.advanced-topic-loader::before,
+.full-scroll-tail-loader::before {
+  content: none !important;
+}
+
+@keyframes dashSpinOne {
+  0%   { transform: rotate(0deg); }
+  25%  { transform: rotate(360deg); }
+  30%  { transform: rotate(370deg); }
+  35%  { transform: rotate(360deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes dashSpinTwo {
+  0%   { transform: rotate(0deg); }
+  20%  { transform: rotate(0deg); }
+  30%  { transform: rotate(-180deg); }
+  35%  { transform: rotate(-190deg); }
+  40%  { transform: rotate(-180deg); }
+  78%  { transform: rotate(-180deg); }
+  95%  { transform: rotate(-360deg); }
+  98%  { transform: rotate(-370deg); }
+  100% { transform: rotate(-360deg); }
+}
+
+@keyframes dashSpinThree {
+  0%   { transform: rotate(0deg); }
+  27%  { transform: rotate(0deg); }
+  40%  { transform: rotate(180deg); }
+  45%  { transform: rotate(190deg); }
+  50%  { transform: rotate(180deg); }
+  62%  { transform: rotate(180deg); }
+  75%  { transform: rotate(360deg); }
+  80%  { transform: rotate(370deg); }
+  85%  { transform: rotate(360deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@keyframes dashSpinFour {
+  0%   { transform: rotate(0deg); }
+  38%  { transform: rotate(0deg); }
+  60%  { transform: rotate(-360deg); }
+  65%  { transform: rotate(-370deg); }
+  75%  { transform: rotate(-360deg); }
+  100% { transform: rotate(-360deg); }
+}
+
+@keyframes loaderBackdropSweep {
+  0%, 100% { transform: translateX(-10%) rotate(0.001deg); opacity: 0.55; }
+  50%      { transform: translateX(10%)  rotate(0.001deg); opacity: 1; }
+}
+
+@keyframes loaderCardEnter {
+  from { opacity: 0; transform: translateY(12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+@keyframes syncPulse {
+  0%   { box-shadow: 0 0 0 0      color-mix(in srgb, currentColor 55%, transparent); }
+  100% { box-shadow: 0 0 0 0.6rem transparent; }
+}
+
+@keyframes dockSlideIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 520px) {
+  :root {
+    --loader-dash-width: 28px;
+    --loader-dash-height: 12px;
+    --loader-dash-gap: 10px;
+    --loader-dash-overlap: -14px;
+  }
+
+  .startup-loader-card {
+    border-radius: 1.6rem;
+    padding: 2rem 1.25rem;
+  }
+}
+
+/* @media (prefers-reduced-motion: reduce) {
+  .startup-loader::before,
+  .startup-loader-card,
+  .dash-loader__dash,
+  .sync-status-pulse {
+    animation: none !important;
+    transition: none !important;
+  }
+} */

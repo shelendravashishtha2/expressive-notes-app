@@ -23,7 +23,9 @@
     "react-markdown": "^10.1.0",
     "rehype-slug": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "vite": "latest"
+    "vite": "latest",
+    "@reduxjs/toolkit": "^2.5.0",
+    "react-redux": "^9.2.0"
   },
   "devDependencies": {
     "autoprefixer": "^10.4.20",

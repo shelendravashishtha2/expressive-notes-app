@@ -24,7 +24,7 @@ function ExportRenderer({ plan, generatedAt }) {
         <p className="pdf-kicker">Technical Notes Cookbook</p>
         <h1 className="pdf-cover-title">Selected Technical Notes Export</h1>
         <p className="pdf-cover-summary">
-          {plan.summaryText}. Generated from the current curated notes dataset with static code and diagram fallbacks for PDF output.
+          {plan.summaryText}. Generated from the live remote notes API with static code and diagram fallbacks for PDF output.
         </p>
 
         <div className="pdf-meta-grid">
