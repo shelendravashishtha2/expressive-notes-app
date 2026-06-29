@@ -50,9 +50,18 @@ function ExportDialog({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[90] overflow-hidden bg-slate-950/55 p-0 backdrop-blur-sm sm:p-4">
+    <div
+      className="fixed inset-0 z-[120] overflow-hidden bg-slate-950/45 p-0 backdrop-blur-md sm:p-4"
+      onClick={onClose}
+    >
       <div className="mx-auto flex min-h-full w-full max-w-6xl items-stretch justify-center py-0 sm:py-2 lg:items-center">
-        <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden border-0 border-[var(--border)] bg-[var(--article-bg)] shadow-2xl shadow-slate-950/20 sm:h-auto sm:max-h-[96vh] sm:rounded-[2rem] sm:border">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Export selected notes as a PDF"
+          onClick={(event) => event.stopPropagation()}
+          className="flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden border-0 border-[var(--border)] bg-[var(--article-bg)] shadow-2xl shadow-slate-950/20 sm:h-auto sm:max-h-[96vh] sm:rounded-[2rem] sm:border"
+        >
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] px-4 pb-4 pt-[calc(env(safe-area-inset-top)+1rem)] sm:gap-4 sm:px-6 sm:py-5">
             <div className="min-w-0">
               <p className="text-xs font-black uppercase tracking-[0.18em] text-[var(--accent-strong)]">
