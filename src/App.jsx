@@ -29,12 +29,14 @@ import {
   DEFAULT_MERMAID_THEME_PREFS,
   normalizeMermaidThemePrefs
 } from './utils/mermaidThemes.js';
+import { buildFastSearchIndex, searchSectionsFast } from './utils/search.js';
 import { createScopedHeadingId, getSections, slugify } from './utils/text.js';
 
 const FULL_SCROLL_INITIAL_COUNT = 8;
 const FULL_SCROLL_BATCH_SIZE = 10;
 const FULL_SCROLL_PREFETCH_AHEAD = 14;
 const TOPIC_PREFETCH_WINDOW = 8;
+const SEARCH_FALLBACK_HYDRATE_BATCH_SIZE = 18;
 const EMPTY_TOPIC = Object.freeze({
   id: '',
   title: '',
@@ -230,6 +232,9 @@ export default function App() {
   const [isFullscreen, setIsFullscreen] = useState(() => Boolean(getFullscreenElement()));
   const [pauseLazyHydration, setPauseLazyHydration] = useState(false);
   const [forcedHydratedTopicIds, setForcedHydratedTopicIds] = useState(() => new Set());
+  const [searchFallbackTopicDetailsById, setSearchFallbackTopicDetailsById] = useState({});
+  const [isHydratingSearchFallback, setIsHydratingSearchFallback] = useState(false);
+  const [hasStartedSearch, setHasStartedSearch] = useState(false);
 
   const appShellRef = useRef(null);
   const articleRef = useRef(null);
@@ -259,6 +264,7 @@ export default function App() {
   const programmaticScrollRef = useRef(false);
   const programmaticScrollReleaseTimerRef = useRef(0);
   const fullScrollLoadMoreRef = useRef(null);
+  const searchFallbackHydrationStartedRef = useRef(false);
 
   const remoteTopics = bootstrapQuery.data?.topics || [];
   const groupOrderPreference = bootstrapQuery.data?.groupOrderPreference || [];
@@ -321,14 +327,34 @@ export default function App() {
     });
     return nextMap;
   }, [readerTopics]);
+  const localSearchTopics = useMemo(() => {
+    if (isReaderSelectionMode) return readerTopics;
+
+    return remoteTopics.map((topic) => mergeTopicRecord(
+      topic,
+      topicDetailsById[topic.id] || searchFallbackTopicDetailsById[topic.id] || {}
+    ));
+  }, [isReaderSelectionMode, readerTopics, remoteTopics, searchFallbackTopicDetailsById, topicDetailsById]);
+  const localSearchIndex = useMemo(() => {
+    if (debouncedQuery.trim().length < 2 || !localSearchTopics.length) return null;
+    return buildFastSearchIndex(localSearchTopics);
+  }, [debouncedQuery, localSearchTopics]);
   const remoteSearchQuery = useSearchSectionsQuery(
     { q: debouncedQuery, limit: 24 },
-    { skip: debouncedQuery.trim().length < 2 || !allTopics.length }
+    { skip: debouncedQuery.trim().length < 2 || !allTopics.length || isReaderSelectionMode }
   );
+  const localSearchResults = useMemo(() => {
+    if (debouncedQuery.trim().length < 2 || !localSearchIndex) return [];
+    return searchSectionsFast(localSearchIndex, debouncedQuery, 24).map(normalizeRemoteSearchResult);
+  }, [debouncedQuery, localSearchIndex]);
   const searchResults = useMemo(() => {
     if (debouncedQuery.trim().length < 2) return [];
-    return remoteSearchQuery.data?.map(normalizeRemoteSearchResult) || [];
-  }, [debouncedQuery, remoteSearchQuery.data]);
+    if (isReaderSelectionMode) return localSearchResults;
+    if (remoteSearchQuery.isSuccess) {
+      return remoteSearchQuery.data?.map(normalizeRemoteSearchResult) || [];
+    }
+    return localSearchResults;
+  }, [debouncedQuery, isReaderSelectionMode, localSearchResults, remoteSearchQuery.data, remoteSearchQuery.isSuccess]);
 
   const activeTopic = useMemo(
     () => readerTopics.find((topic) => topic.id === activeId) || readerTopics[0] || allTopics[0] || EMPTY_TOPIC,
@@ -387,6 +413,82 @@ export default function App() {
 
     return false;
   }, []);
+
+  useEffect(() => {
+    if (debouncedQuery.trim().length >= 2) {
+      setHasStartedSearch(true);
+    }
+  }, [debouncedQuery]);
+
+  useEffect(() => {
+    if (!hasStartedSearch || isReaderSelectionMode || !remoteTopics.length || searchFallbackHydrationStartedRef.current) {
+      return undefined;
+    }
+
+    const topicIds = remoteTopics
+      .map((topic) => topic.id)
+      .filter(Boolean);
+    if (!topicIds.length) return undefined;
+
+    searchFallbackHydrationStartedRef.current = true;
+    let cancelled = false;
+
+    const hydrateSearchFallback = async () => {
+      let hadBatchFailure = false;
+      setIsHydratingSearchFallback(true);
+
+      try {
+        for (let index = 0; index < topicIds.length; index += SEARCH_FALLBACK_HYDRATE_BATCH_SIZE) {
+          const chunk = topicIds.slice(index, index + SEARCH_FALLBACK_HYDRATE_BATCH_SIZE);
+          if (!chunk.length) continue;
+
+          try {
+            const hydratedTopics = await hydrateTopicsTrigger({ ids: chunk, includeSectionBodies: true }).unwrap();
+            if (cancelled) return;
+
+            setSearchFallbackTopicDetailsById((current) => {
+              const next = { ...current };
+              let changed = false;
+
+              hydratedTopics.forEach((topic) => {
+                const normalizedTopic = mergeTopicRecord(topic, topic);
+                if (!normalizedTopic.id) return;
+
+                if (
+                  current[normalizedTopic.id]?.body_hash === normalizedTopic.body_hash
+                  && current[normalizedTopic.id]?.content === normalizedTopic.content
+                ) {
+                  return;
+                }
+
+                next[normalizedTopic.id] = normalizedTopic;
+                changed = true;
+              });
+
+              return changed ? next : current;
+            });
+          } catch {
+            // Keep the metadata-only fallback active even if a background hydrate batch fails.
+            hadBatchFailure = true;
+          }
+        }
+      } finally {
+        if (hadBatchFailure) {
+          searchFallbackHydrationStartedRef.current = false;
+        }
+        if (!cancelled) {
+          setIsHydratingSearchFallback(false);
+        }
+      }
+    };
+
+    hydrateSearchFallback();
+    return () => {
+      cancelled = true;
+      searchFallbackHydrationStartedRef.current = false;
+      setIsHydratingSearchFallback(false);
+    };
+  }, [hasStartedSearch, hydrateTopicsTrigger, isReaderSelectionMode, remoteTopics]);
 
 
   const hydrateTopicsByIds = useCallback(async (topicIds = [], { includeSectionBodies = true } = {}) => {
